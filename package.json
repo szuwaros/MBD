@@ -1,0 +1,13 @@
+{
+  "name": "mbd",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Aplikacja budżetu domowego",
+  "workspaces": ["backend", "frontend"],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "build": "npm run build --workspace=frontend && npm run build --workspace=backend",
+    "start": "npm run start --workspace=backend"
+  }
+}
