@@ -54,12 +54,26 @@ export default function Categories() {
     load();
   };
 
-  // Group categories by group_name
-  const grouped = new Map<string, any[]>();
+  const handleMoveCategory = async (id: number, direction: 'up' | 'down') => {
+    await api.moveCategory(id, direction);
+    load();
+  };
+
+  const handleMoveGroup = async (group: string, direction: 'up' | 'down') => {
+    await api.moveGroup(group, direction);
+    load();
+  };
+
+  // Group categories by group_name (preserving DB sort order)
+  const grouped: [string, any[]][] = [];
+  const groupMap = new Map<string, any[]>();
   for (const c of categories) {
     const g = c.group_name || 'Bez grupy';
-    if (!grouped.has(g)) grouped.set(g, []);
-    grouped.get(g)!.push(c);
+    if (!groupMap.has(g)) {
+      groupMap.set(g, []);
+      grouped.push([g, groupMap.get(g)!]);
+    }
+    groupMap.get(g)!.push(c);
   }
 
   return (
@@ -102,30 +116,41 @@ export default function Categories() {
       </form>
 
       <div className="space-y-4">
-        {Array.from(grouped.entries()).map(([group, cats]) => (
+        {grouped.map(([group, cats], groupIdx) => (
           <div key={group} className="bg-white rounded-lg shadow">
             <div className="px-4 py-2 bg-gray-50 border-b rounded-t-lg flex items-center gap-2">
+              <div className="flex flex-col mr-1">
+                <button onClick={() => handleMoveGroup(group, 'up')} disabled={groupIdx === 0} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-[10px] leading-none">&#9650;</button>
+                <button onClick={() => handleMoveGroup(group, 'down')} disabled={groupIdx === grouped.length - 1} className="text-gray-400 hover:text-gray-600 disabled:opacity-20 text-[10px] leading-none">&#9660;</button>
+              </div>
               <CategoryIcon name={group} group size={18} className="text-gray-500" />
               <h3 className="font-semibold text-sm text-gray-700">{group}</h3>
+              <span className="text-xs text-gray-400 ml-auto">{cats.length} kat.</span>
             </div>
             <table className="w-full text-sm">
               <tbody>
-                {cats.map((c: any) => (
+                {cats.map((c: any, catIdx: number) => (
                   <tr key={c.id} className="border-t hover:bg-gray-50">
-                    <td className="px-3 py-1 w-10">
+                    <td className="px-1 py-0.5 w-6">
+                      <div className="flex flex-col items-center">
+                        <button onClick={() => handleMoveCategory(c.id, 'up')} disabled={catIdx === 0} className="text-gray-300 hover:text-gray-500 disabled:opacity-20 text-[10px] leading-none">&#9650;</button>
+                        <button onClick={() => handleMoveCategory(c.id, 'down')} disabled={catIdx === cats.length - 1} className="text-gray-300 hover:text-gray-500 disabled:opacity-20 text-[10px] leading-none">&#9660;</button>
+                      </div>
+                    </td>
+                    <td className="px-2 py-0.5 w-10">
                       {editId === c.id
                         ? <input type="color" value={editColor} onChange={e => setEditColor(e.target.value)} className="h-6 w-8 border rounded cursor-pointer" />
                         : <span className="inline-block w-5 h-5 rounded" style={{ backgroundColor: c.color }} />}
                     </td>
-                    <td className="px-2 py-1 w-8">
+                    <td className="px-2 py-0.5 w-8">
                       <CategoryIcon name={c.name} size={16} color={c.color} />
                     </td>
-                    <td className="px-2 py-1">
+                    <td className="px-2 py-0.5">
                       {editId === c.id
                         ? <input value={editName} onChange={e => setEditName(e.target.value)} className="border rounded px-2 py-0.5 text-sm w-full" autoFocus />
                         : <span className="font-medium">{c.name}</span>}
                     </td>
-                    <td className="px-2 py-1 w-28">
+                    <td className="px-2 py-0.5 w-28">
                       {editId === c.id
                         ? <select value={editGroup} onChange={e => setEditGroup(e.target.value)} className="border rounded px-1 py-0.5 text-xs w-full">
                             <option value="">- brak -</option>
@@ -133,7 +158,7 @@ export default function Categories() {
                           </select>
                         : null}
                     </td>
-                    <td className="px-2 py-1 w-20">
+                    <td className="px-2 py-0.5 w-20">
                       {editId === c.id
                         ? <select value={editCatType} onChange={e => setEditCatType(e.target.value)} className="border rounded px-1 py-0.5 text-xs">
                             <option value="expense">Wydatek</option>
@@ -142,8 +167,8 @@ export default function Categories() {
                           </select>
                         : <span className="text-gray-400 text-xs">{TYPE_LABELS[c.cat_type || 'expense']}</span>}
                     </td>
-                    <td className="px-2 py-1 w-16 text-right text-gray-400 text-xs">{c.usage_count}</td>
-                    <td className="px-2 py-1 w-32 text-right space-x-1">
+                    <td className="px-2 py-0.5 w-16 text-right text-gray-400 text-xs">{c.usage_count}</td>
+                    <td className="px-2 py-0.5 w-32 text-right space-x-1">
                       {editId === c.id ? (
                         <>
                           <button onClick={() => handleUpdate(c.id)} className="text-green-600 hover:text-green-800 text-xs">Zapisz</button>

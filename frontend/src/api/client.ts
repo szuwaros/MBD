@@ -29,6 +29,10 @@ export const api = {
     request<any>('/categories', { method: 'POST', body: JSON.stringify(data) }),
   updateCategory: (id: number, data: { name?: string; color?: string; cat_type?: string; group_name?: string }) =>
     request<any>(`/categories/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  moveCategory: (id: number, direction: 'up' | 'down') =>
+    request<any>(`/categories/${id}/move`, { method: 'POST', body: JSON.stringify({ direction }) }),
+  moveGroup: (group_name: string, direction: 'up' | 'down') =>
+    request<any>('/categories/groups/move', { method: 'POST', body: JSON.stringify({ group_name, direction }) }),
   deleteCategory: (id: number) =>
     request<any>(`/categories/${id}`, { method: 'DELETE' }),
 

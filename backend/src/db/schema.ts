@@ -216,6 +216,27 @@ export function initializeDatabase(): void {
   // "Inne przychody" for Przychody group
   db.exec("INSERT OR IGNORE INTO categories (name, color, cat_type, group_name) VALUES ('Inne przychody', '#a7f3d0', 'income', 'Przychody')");
 
+  // Migrate: add sort_order to categories
+  const catColsSort = db.prepare("PRAGMA table_info(categories)").all() as { name: string }[];
+  if (!catColsSort.map(c => c.name).includes('sort_order')) {
+    db.exec("ALTER TABLE categories ADD COLUMN sort_order INTEGER DEFAULT 0");
+    // Initialize sort_order: groups by current alpha order, "Inne" last within each group
+    const groups = db.prepare("SELECT DISTINCT group_name FROM categories WHERE group_name IS NOT NULL ORDER BY group_name").all() as { group_name: string }[];
+    const updateOrder = db.prepare("UPDATE categories SET sort_order = ? WHERE id = ?");
+    let groupIdx = 0;
+    for (const { group_name } of groups) {
+      const cats = db.prepare("SELECT id, name FROM categories WHERE group_name = ? ORDER BY name").all(group_name) as { id: number; name: string }[];
+      let catIdx = 0;
+      for (const cat of cats) {
+        // "Inne" goes to end (sort_order 999 within group)
+        const order = cat.name === 'Inne' || cat.name === 'Inne przychody' ? groupIdx * 1000 + 999 : groupIdx * 1000 + catIdx;
+        updateOrder.run(order, cat.id);
+        catIdx++;
+      }
+      groupIdx++;
+    }
+  }
+
   // Migrate: add note to transactions and items
   const txColsRefresh = db.prepare("PRAGMA table_info(transactions)").all() as { name: string }[];
   if (!txColsRefresh.map(c => c.name).includes('note')) {

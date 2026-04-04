@@ -131,7 +131,13 @@ export function parseReceiptLines(text: string): OcrReceiptItem[] {
 
     // Detect end of products section
     // Rossmann/other: "SPRZEDAŻ OPODATKOWANA", also SUMA, RAZEM, horizontal lines
-    if (/^[\|\s]*(SPRZEDA|SPRZED\.|SP\.\s*OP|SUMA|RAZEM|S.UMA|S.UKA|ŚUKA|[-=_]{5,})/i.test(line)) {
+    // OCR may truncate: "RZEDAŻ" instead of "SPRZEDAŻ", "MA PLN" instead of "SUMA PLN"
+    if (/^[\|\s]*(S?P?RZEDA|SPRZED\.|SP\.\s*OP|SUMA|RAZEM|S.UMA|S.UKA|ŚUKA|[-=_]{5,})/i.test(line)) {
+      inProducts = false;
+      continue;
+    }
+    // Also catch truncated summary lines: "MA PTU", "MA PLN", "UB 8,00"
+    if (/^[\|\s]*(PTU\s+[A-H]|[A-Z]{1,2}\s+PTU|[A-Z]{1,2}\s+PLN|[A-Z]{1,2}\s+\d+[.,]\d{2}\s*%)/i.test(line)) {
       inProducts = false;
       continue;
     }
@@ -139,9 +145,12 @@ export function parseReceiptLines(text: string): OcrReceiptItem[] {
     if (isSkipLine(line)) continue;
     if (!inProducts) continue;
 
-    // Skip discount/upust lines — already included in product prices
-    // OCR often mangles "Uwzgl" → "Uuzgl", "Uuwzgl", etc.
+    // Skip discount/upust lines and non-product lines
     if (/(?:opust|rabat|znizk|upust|[Uu]+w?zgl)/i.test(line)) {
+      continue;
+    }
+    // Skip pharmacy/payment lines: "z recepty", "do zapłaty", "Podsuma"
+    if (/^[\|\s]*(z recept|do zap[łl]at|o zap[łl]at|podsuma|podsum\b)/i.test(line)) {
       continue;
     }
 
@@ -160,7 +169,7 @@ export function parseReceiptLines(text: string): OcrReceiptItem[] {
     // Total group: capture liberally (digits, commas, dots, spaces, OCR junk) — cleanPrice handles cleanup
     // TOTAL: first char can be digit or OCR-mangled letter (U instead of 0, etc.)
     const TOTAL = '([\\w][\\d.,\\s/_%]*\\d?)';
-    const TAIL = '[A-Ha-hĆć%/»©®€$]?\\s*$';
+    const TAIL = '[A-Ha-hĆć%/»©®€$()\\[\\]]?\\s*$';
 
     // Sanity-check: if cleaned total is way off from qty*unitPrice, use qty*unitPrice
     // OCR can mangle the total price (e.g. "5,/%" → 5 instead of 5.79)
@@ -304,6 +313,39 @@ export function parseReceiptLines(text: string): OcrReceiptItem[] {
         amount: cleanPrice(match[2]),
       });
       continue;
+    }
+
+    // Pattern F: Multi-line product — name on this line, qty×price on next line
+    // e.g. "DYMAX Vital 50+ 60 tabl.+20 ta.2238/B" followed by "1 x52,00 52,008"
+    if (line.length > 3 && !/^\d/.test(line)) {
+      const nextLine = i + 1 < lines.length ? lines[i + 1] : '';
+      const qtyPriceMatch = nextLine.match(new RegExp(`^\\s*(\\d+[.,]?\\d*)\\s*[xX*«]\\s*(\\d+[.,]\\d{2})\\s+${TOTAL}\\s*${TAIL}`));
+      if (qtyPriceMatch) {
+        const qty = parseAmount(qtyPriceMatch[1]);
+        const unitPrice = cleanPrice(qtyPriceMatch[2]);
+        items.push({
+          name: line.trim(),
+          quantity: qty,
+          unitPrice,
+          amount: saneTotal(cleanPrice(qtyPriceMatch[3]), unitPrice, qty),
+        });
+        i++; // skip next line
+        continue;
+      }
+      // Also handle: next line has just "QTY xPRICE" without total
+      const qtyPriceOnly = nextLine.match(/^\s*(\d+[.,]?\d*)\s*[xX*«]\s*(\d+[.,]\d{2})\s*$/);
+      if (qtyPriceOnly) {
+        const qty = parseAmount(qtyPriceOnly[1]);
+        const unitPrice = cleanPrice(qtyPriceOnly[2]);
+        items.push({
+          name: line.trim(),
+          quantity: qty,
+          unitPrice,
+          amount: Math.round(qty * unitPrice * 100) / 100,
+        });
+        i++;
+        continue;
+      }
     }
   }
 

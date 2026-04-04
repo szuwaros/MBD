@@ -98,7 +98,14 @@ export default function Receipts() {
     if (!selected) return;
     const params: Record<string, string> = { limit: '10', offset: '0' };
     if (matchSearch) {
-      params.search = matchSearch;
+      // If input looks like a number, search by amount; otherwise by text
+      const num = parseFloat(matchSearch.replace(',', '.'));
+      if (!isNaN(num)) {
+        params.amount_match = String(Math.abs(num));
+        if (selected.receipt_date) params.date_match = selected.receipt_date;
+      } else {
+        params.search = matchSearch;
+      }
     } else {
       if (selected.total_amount) params.amount_match = String(Math.abs(selected.total_amount));
       if (selected.receipt_date) params.date_match = selected.receipt_date;
@@ -116,20 +123,20 @@ export default function Receipts() {
 
   const columns: Column<any>[] = [
     {
-      key: '_actions', label: '', sortable: false, className: 'px-2 py-1',
+      key: '_actions', label: '', sortable: false, className: 'px-2 py-0.5',
       render: r => <button onClick={() => openDetails(r.id)} className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 hover:bg-blue-200">Podgląd</button>,
     },
     { key: 'receipt_date', label: 'Data', render: r => r.receipt_date || '-' },
     { key: 'store_name', label: 'Sklep', render: r => r.store_name ? <span className="font-medium">{r.store_name}</span> : <span className="text-gray-400 italic">Nieznany</span> },
-    { key: 'total_amount', label: 'Kwota', headerClassName: 'text-right', className: 'px-2 py-1 text-right font-mono', render: r => r.total_amount ? `${r.total_amount.toFixed(2)} PLN` : '-' },
-    { key: 'item_count', label: 'Pozycje', headerClassName: 'text-right', className: 'px-2 py-1 text-right text-gray-500', render: r => r.item_count || '-' },
+    { key: 'total_amount', label: 'Kwota', headerClassName: 'text-right', className: 'px-2 py-0.5 text-right font-mono', render: r => r.total_amount ? `${r.total_amount.toFixed(2)} PLN` : '-' },
+    { key: 'item_count', label: 'Pozycje', headerClassName: 'text-right', className: 'px-2 py-0.5 text-right text-gray-500', render: r => r.item_count || '-' },
     {
       key: 'transaction_id', label: 'Transakcja',
       render: r => r.transaction_id
         ? <span className="text-green-600 text-xs">Powiązano (#{r.transaction_id})</span>
         : <span className="text-orange-500 text-xs">Niepowiązano</span>,
     },
-    { key: 'source_filename', label: 'Plik', className: 'px-2 py-1 text-xs text-gray-400 font-mono', render: r => r.source_filename },
+    { key: 'source_filename', label: 'Plik', className: 'px-2 py-0.5 text-xs text-gray-400 font-mono', render: r => r.source_filename },
   ];
 
   const itemsSum = selected?.items?.reduce((s: number, i: any) => s + i.amount, 0) || 0;
@@ -188,7 +195,7 @@ export default function Receipts() {
                 <button
                   onClick={handleReparse}
                   disabled={reparsing}
-                  className="px-3 py-1.5 bg-amber-100 text-amber-700 rounded text-xs font-medium hover:bg-amber-200 disabled:opacity-50 shrink-0"
+                  className="px-3 py-0.5.5 bg-amber-100 text-amber-700 rounded text-xs font-medium hover:bg-amber-200 disabled:opacity-50 shrink-0"
                 >
                   {reparsing ? 'Interpretuję...' : 'Ponów interpretację'}
                 </button>
@@ -201,11 +208,11 @@ export default function Receipts() {
                   <thead>
                     <tr className="border-b text-gray-500 text-xs">
                       <th className="w-6"></th>
-                      <th className="text-left py-1">Produkt</th>
-                      <th className="text-right py-1 w-14">Ilość</th>
-                      <th className="text-right py-1 w-20">Cena j.</th>
-                      <th className="text-right py-1 w-20">Kwota</th>
-                      <th className="text-left py-1 pl-2 w-36">Kategoria</th>
+                      <th className="text-left py-0.5">Produkt</th>
+                      <th className="text-right py-0.5 w-14">Ilość</th>
+                      <th className="text-right py-0.5 w-20">Cena j.</th>
+                      <th className="text-right py-0.5 w-20">Kwota</th>
+                      <th className="text-left py-0.5 pl-2 w-36">Kategoria</th>
                       <th className="w-14"></th>
                     </tr>
                   </thead>
@@ -214,31 +221,31 @@ export default function Receipts() {
                       <tr key={item.id} className="border-b hover:bg-gray-50">
                         {editItemId === item.id ? (
                           <>
-                            <td className="py-1"><button onClick={() => setEditItemId(null)} className="text-gray-400 text-xs">&#x2715;</button></td>
-                            <td className="py-1"><input value={editItem.name} onChange={e => setEditItem({ ...editItem, name: e.target.value })} className="border rounded px-1 py-0.5 text-xs w-full" /></td>
-                            <td className="py-1"><input type="number" value={editItem.quantity} onChange={e => setEditItem({ ...editItem, quantity: parseFloat(e.target.value) })} className="border rounded px-1 py-0.5 text-xs w-14 text-right" step="1" /></td>
-                            <td className="py-1"><input type="number" value={editItem.unit_price} onChange={e => setEditItem({ ...editItem, unit_price: parseFloat(e.target.value) })} className="border rounded px-1 py-0.5 text-xs w-20 text-right" step="0.01" /></td>
-                            <td className="py-1"><input type="number" value={editItem.amount} onChange={e => setEditItem({ ...editItem, amount: parseFloat(e.target.value) })} className="border rounded px-1 py-0.5 text-xs w-20 text-right" step="0.01" /></td>
-                            <td className="py-1 pl-2">
+                            <td className="py-0.5"><button onClick={() => setEditItemId(null)} className="text-gray-400 text-xs">&#x2715;</button></td>
+                            <td className="py-0.5"><input value={editItem.name} onChange={e => setEditItem({ ...editItem, name: e.target.value })} className="border rounded px-1 py-0.5 text-xs w-full" /></td>
+                            <td className="py-0.5"><input type="number" value={editItem.quantity} onChange={e => setEditItem({ ...editItem, quantity: parseFloat(e.target.value) })} className="border rounded px-1 py-0.5 text-xs w-14 text-right" step="1" /></td>
+                            <td className="py-0.5"><input type="number" value={editItem.unit_price} onChange={e => setEditItem({ ...editItem, unit_price: parseFloat(e.target.value) })} className="border rounded px-1 py-0.5 text-xs w-20 text-right" step="0.01" /></td>
+                            <td className="py-0.5"><input type="number" value={editItem.amount} onChange={e => setEditItem({ ...editItem, amount: parseFloat(e.target.value) })} className="border rounded px-1 py-0.5 text-xs w-20 text-right" step="0.01" /></td>
+                            <td className="py-0.5 pl-2">
                               <GroupedCategorySelect categories={categories} value={editItem.category_id || ''} onChange={v => setEditItem({ ...editItem, category_id: v ? Number(v) : null })} className="border rounded px-1 py-0.5 text-xs w-full" />
                             </td>
-                            <td className="py-1 text-right">
+                            <td className="py-0.5 text-right">
                               <button onClick={handleUpdateItem} className="text-green-600 text-xs font-medium">Zapisz</button>
                             </td>
                           </>
                         ) : (
                           <>
-                            <td className="py-1">
+                            <td className="py-0.5">
                               <button onClick={() => handleDeleteItem(item.id)} className="text-red-400 hover:text-red-600 text-xs leading-none">&#x2715;</button>
                             </td>
-                            <td className="py-1 font-medium text-xs">{item.name}</td>
-                            <td className="py-1 text-right text-gray-500 text-xs">{item.quantity}</td>
-                            <td className="py-1 text-right font-mono text-xs">{item.unit_price?.toFixed(2) ?? '-'}</td>
-                            <td className="py-1 text-right font-mono text-xs">{item.amount.toFixed(2)}</td>
-                            <td className="py-1 pl-2">
+                            <td className="py-0.5 font-medium text-xs cursor-pointer hover:bg-blue-50" onClick={() => { setEditItemId(item.id); setEditItem({ name: item.name, quantity: item.quantity, unit_price: item.unit_price, amount: item.amount, category_id: item.category_id }); }}>{item.name}</td>
+                            <td className="py-0.5 text-right text-gray-500 text-xs">{item.quantity}</td>
+                            <td className="py-0.5 text-right font-mono text-xs">{item.unit_price?.toFixed(2) ?? '-'}</td>
+                            <td className="py-0.5 text-right font-mono text-xs">{item.amount.toFixed(2)}</td>
+                            <td className="py-0.5 pl-2">
                               <GroupedCategorySelect categories={categories} value={item.category_id || ''} onChange={v => handleCategoryChange(item.id, v)} className="border rounded px-1 py-0.5 text-xs w-full" />
                             </td>
-                            <td className="py-1 text-right">
+                            <td className="py-0.5 text-right">
                               <button onClick={() => { setEditItemId(item.id); setEditItem({ name: item.name, quantity: item.quantity, unit_price: item.unit_price, amount: item.amount, category_id: item.category_id }); }} className="text-blue-500 text-xs">Edytuj</button>
                             </td>
                           </>
@@ -248,16 +255,16 @@ export default function Receipts() {
                     {/* Add new item row */}
                     {newItem ? (
                       <tr className="border-b bg-green-50/50">
-                        <td className="py-1"><button onClick={() => setNewItem(null)} className="text-gray-400 text-xs">&#x2715;</button></td>
-                        <td className="py-1"><input value={newItem.name} onChange={e => setNewItem({ ...newItem, name: e.target.value })} className="border rounded px-1 py-0.5 text-xs w-full" placeholder="Nazwa" autoFocus /></td>
+                        <td className="py-0.5"><button onClick={() => setNewItem(null)} className="text-gray-400 text-xs">&#x2715;</button></td>
+                        <td className="py-0.5"><input value={newItem.name} onChange={e => setNewItem({ ...newItem, name: e.target.value })} className="border rounded px-1 py-0.5 text-xs w-full" placeholder="Nazwa" autoFocus /></td>
                         <td colSpan={2}></td>
-                        <td className="py-1"><input type="number" value={newItem.amount} onChange={e => setNewItem({ ...newItem, amount: e.target.value })} className="border rounded px-1 py-0.5 text-xs w-20 text-right" step="0.01" placeholder="0.00" /></td>
+                        <td className="py-0.5"><input type="number" value={newItem.amount} onChange={e => setNewItem({ ...newItem, amount: e.target.value })} className="border rounded px-1 py-0.5 text-xs w-20 text-right" step="0.01" placeholder="0.00" /></td>
                         <td></td>
-                        <td className="py-1 text-right"><button onClick={handleAddItem} className="text-green-600 text-xs font-medium">Dodaj</button></td>
+                        <td className="py-0.5 text-right"><button onClick={handleAddItem} className="text-green-600 text-xs font-medium">Dodaj</button></td>
                       </tr>
                     ) : (
                       <tr>
-                        <td colSpan={7} className="py-1">
+                        <td colSpan={7} className="py-0.5">
                           <button onClick={() => setNewItem({ name: '', amount: '' })} className="text-xs text-blue-500 hover:text-blue-700">+ Dodaj pozycję</button>
                         </td>
                       </tr>
@@ -266,11 +273,11 @@ export default function Receipts() {
                   <tfoot>
                     <tr className="border-t font-medium text-xs">
                       <td></td>
-                      <td colSpan={3} className="py-1 text-right">Suma pozycji:</td>
-                      <td className={`py-1 text-right font-mono ${Math.abs(itemsSum - (selected.total_amount || 0)) > 0.1 ? 'text-red-600' : ''}`}>
+                      <td colSpan={3} className="py-0.5 text-right">Suma pozycji:</td>
+                      <td className={`py-0.5 text-right font-mono ${Math.abs(itemsSum - (selected.total_amount || 0)) > 0.1 ? 'text-red-600' : ''}`}>
                         {itemsSum.toFixed(2)}
                       </td>
-                      <td colSpan={2} className="py-1 text-xs text-gray-400 pl-2">
+                      <td colSpan={2} className="py-0.5 text-xs text-gray-400 pl-2">
                         {selected.total_amount && Math.abs(itemsSum - selected.total_amount) > 0.1 && (
                           <span>paragon: {selected.total_amount.toFixed(2)} (różnica: {(itemsSum - selected.total_amount).toFixed(2)})</span>
                         )}
@@ -296,13 +303,16 @@ export default function Receipts() {
                 <div className="border-t pt-3">
                   <h3 className="text-sm font-semibold mb-2">Skojarz z transakcją</h3>
                   <div className="flex gap-2 mb-2">
-                    <input value={matchSearch} onChange={e => setMatchSearch(e.target.value)} className="flex-1 border rounded px-2 py-1 text-sm" placeholder="Szukaj transakcji..." onKeyDown={e => e.key === 'Enter' && searchTransactions()} />
-                    <button onClick={searchTransactions} className="px-3 py-1 bg-gray-100 border rounded text-sm hover:bg-gray-200">Szukaj</button>
+                    <input value={matchSearch} onChange={e => setMatchSearch(e.target.value)} className="flex-1 border rounded px-2 py-0.5 text-sm" placeholder="Kwota (np. 144.07) lub kontrahent..." onKeyDown={e => e.key === 'Enter' && searchTransactions()} />
+                    <button onClick={searchTransactions} className="px-3 py-0.5 bg-gray-100 border rounded text-sm hover:bg-gray-200">Szukaj</button>
                   </div>
+                  {matchResults.length === 0 && !matchSearch && (
+                    <p className="text-xs text-gray-400 mb-2">Automatyczne dopasowanie wg kwoty {selected.total_amount?.toFixed(2)} i daty {selected.receipt_date}</p>
+                  )}
                   {matchResults.length > 0 && (
                     <div className="max-h-40 overflow-auto border rounded mb-2">
                       {matchResults.map((tx: any) => (
-                        <div key={tx.id} className="flex items-center justify-between px-2 py-1 border-b hover:bg-gray-50 text-xs">
+                        <div key={tx.id} className="flex items-center justify-between px-2 py-0.5 border-b hover:bg-gray-50 text-xs">
                           <div>
                             <span className="text-gray-500">{tx.date}</span>
                             <span className="ml-2">{tx.counterparty || tx.description}</span>
@@ -315,7 +325,7 @@ export default function Receipts() {
                   )}
                   <div className="flex gap-2 items-center text-xs text-gray-400">
                     <span>lub wpisz ID:</span>
-                    <input value={matchTxId} onChange={e => setMatchTxId(e.target.value)} type="number" className="border rounded px-2 py-1 text-sm w-24" />
+                    <input value={matchTxId} onChange={e => setMatchTxId(e.target.value)} type="number" className="border rounded px-2 py-0.5 text-sm w-24" />
                     <button onClick={() => handleMatch()} disabled={!matchTxId} className="px-2 py-0.5 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-30">Skojarz</button>
                   </div>
                 </div>
@@ -330,7 +340,7 @@ export default function Receipts() {
             </div>
 
             <div className="p-3 border-t flex justify-end">
-              <button onClick={() => setSelected(null)} className="px-4 py-1 border rounded text-sm hover:bg-gray-50">Zamknij</button>
+              <button onClick={() => setSelected(null)} className="px-4 py-0.5 border rounded text-sm hover:bg-gray-50">Zamknij</button>
             </div>
           </div>
         </div>

@@ -157,9 +157,9 @@ export default function DataTable<T>({
         <table className="w-full text-sm">
           <thead className="bg-gray-50 sticky top-0 z-10">
             <tr>
-              {hasExpand && <th className="px-1 py-1.5 w-8"></th>}
+              {hasExpand && <th className="px-1 py-0.5 w-8"></th>}
               {selectable && (
-                <th className="px-2 py-1.5 w-8">
+                <th className="px-2 py-0.5 w-8">
                   <input
                     type="checkbox"
                     checked={processedData.length > 0 && selected.size === processedData.length}
@@ -171,7 +171,7 @@ export default function DataTable<T>({
               {columns.map(col => (
                 <th
                   key={col.key}
-                  className={`px-2 py-1.5 whitespace-nowrap ${col.sortable !== false ? 'cursor-pointer select-none hover:bg-gray-100' : ''} ${col.headerClassName || 'text-left'}`}
+                  className={`px-2 py-0.5 whitespace-nowrap ${col.sortable !== false ? 'cursor-pointer select-none hover:bg-gray-100' : ''} ${col.headerClassName || 'text-left'}`}
                   onClick={col.sortable !== false ? () => handleSort(col.key) : undefined}
                 >
                   <span className="inline-flex items-center gap-1">
@@ -243,7 +243,7 @@ export default function DataTable<T>({
                       {columns.map((col, colIdx) => {
                         const childCol = childColumns!.find(cc => cc.key === col.key);
                         return (
-                          <td key={col.key} className={childCol ? (childCol.className || col.className || 'px-3 py-1.5') : 'px-3 py-1.5'}>
+                          <td key={col.key} className={childCol ? (childCol.className || col.className || 'px-3 py-0.5') : 'px-3 py-0.5'}>
                             {childCol ? childCol.render(child) : (colIdx === 0 ? <span className="text-gray-300 pl-2">{'└'}</span> : null)}
                           </td>
                         );

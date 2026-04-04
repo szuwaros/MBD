@@ -64,8 +64,9 @@ export default function Transactions() {
   useEffect(() => { api.getAccounts().then(setAccounts); api.getCategories().then(setCategories); }, []);
 
   const handleCategoryChange = async (txId: number, categoryId: string) => {
-    await api.updateTransaction(txId, { category_id: categoryId ? Number(categoryId) : null });
-    load();
+    const catId = categoryId ? Number(categoryId) : null;
+    setTransactions(prev => prev.map(t => t.id === txId ? { ...t, category_id: catId } : t));
+    await api.updateTransaction(txId, { category_id: catId });
   };
 
   const handleUnsplit = async (txId: number) => {
@@ -86,21 +87,33 @@ export default function Transactions() {
   const handleItemCategoryChange = async (txId: number, itemId: number, categoryId: string) => {
     const tx = transactions.find(t => t.id === txId);
     if (!tx?.items) return;
+    const catId = categoryId ? Number(categoryId) : null;
     const updatedItems = tx.items.map((item: any) =>
-      item.id === itemId ? { ...item, category_id: categoryId ? Number(categoryId) : null } : item
+      item.id === itemId ? { ...item, category_id: catId } : item
     );
+    // Optimistic update — no scroll reset
+    setTransactions(prev => prev.map(t => t.id === txId ? { ...t, items: updatedItems } : t));
     await api.splitTransaction(txId, updatedItems.map((item: any) => ({
       description: item.description,
       amount: item.amount,
       category_id: item.category_id,
       product_name: item.product_name,
     })));
-    load();
   };
 
   const handleReceiptItemCategoryChange = async (receiptId: number, itemId: number, categoryId: string) => {
-    await api.updateReceiptItem(receiptId, itemId, { category_id: categoryId ? Number(categoryId) : null });
-    load();
+    const catId = categoryId ? Number(categoryId) : null;
+    // Optimistic update — no scroll reset
+    setTransactions(prev => prev.map(t => {
+      if (!t.receipt_items) return t;
+      return {
+        ...t,
+        receipt_items: t.receipt_items.map((ri: any) =>
+          ri.id === itemId ? { ...ri, category_id: catId } : ri
+        ),
+      };
+    }));
+    await api.updateReceiptItem(receiptId, itemId, { category_id: catId });
   };
 
   const columns: Column<any>[] = [
@@ -156,7 +169,7 @@ export default function Transactions() {
 
   const childCols: Column<any>[] = [
     {
-      key: 'description', label: '', className: 'px-3 py-1.5 text-xs text-gray-500 max-w-[220px] truncate',
+      key: 'description', label: '', className: 'px-2 py-0.5 text-xs text-gray-500 max-w-[220px] truncate',
       render: item => (
         <span title={item.description || item.name}>
           <span className="text-gray-400 mr-1">{item.product_name || (item.description || item.name)}</span>
@@ -167,7 +180,7 @@ export default function Transactions() {
       ),
     },
     {
-      key: 'amount', label: '', headerClassName: 'text-right', className: 'px-3 py-1.5 text-right font-mono whitespace-nowrap text-xs',
+      key: 'amount', label: '', headerClassName: 'text-right', className: 'px-2 py-0.5 text-right font-mono whitespace-nowrap text-xs',
       render: item => (
         <span className={Number(item.amount) < 0 ? 'text-red-400' : 'text-gray-500'}>
           {Number(item.amount).toFixed(2)}
@@ -176,7 +189,7 @@ export default function Transactions() {
       ),
     },
     {
-      key: 'category_name', label: '', className: 'px-3 py-1.5 text-xs',
+      key: 'category_name', label: '', className: 'px-2 py-0.5 text-xs',
       render: item => item._type === 'split' ? (
         <GroupedCategorySelect
           categories={categories}

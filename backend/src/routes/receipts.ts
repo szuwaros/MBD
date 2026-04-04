@@ -168,21 +168,33 @@ router.put('/:id/items/:itemId', (req, res) => {
   if (category_id !== undefined) db.prepare('UPDATE receipt_items SET category_id = ? WHERE id = ? AND receipt_id = ?').run(category_id ?? null, itemId, id);
   if (note !== undefined) db.prepare('UPDATE receipt_items SET note = ? WHERE id = ? AND receipt_id = ?').run(note || null, itemId, id);
 
-  // If receipt is linked to a transaction, sync category to matching transaction_item
+  // Sync changes to linked transaction_item and product
   const receipt = db.prepare('SELECT transaction_id FROM receipts WHERE id = ?').get(id) as any;
-  if (receipt?.transaction_id) {
-    // Find the transaction_item that came from this receipt_item (same product_id and description)
-    const ri = db.prepare('SELECT name, product_id FROM receipt_items WHERE id = ?').get(itemId) as any;
-    if (ri) {
-      db.prepare('UPDATE transaction_items SET category_id = ? WHERE transaction_id = ? AND product_id = ? AND description = ?')
-        .run(category_id ?? null, receipt.transaction_id, ri.product_id, ri.name);
+  const ri = db.prepare('SELECT * FROM receipt_items WHERE id = ?').get(itemId) as any;
+
+  if (receipt?.transaction_id && ri) {
+    // Find matching transaction_item by product_id (stable) or fall back to position
+    const tiByProduct = ri.product_id
+      ? db.prepare('SELECT id FROM transaction_items WHERE transaction_id = ? AND product_id = ?').get(receipt.transaction_id, ri.product_id) as any
+      : null;
+
+    if (tiByProduct) {
+      const updates: string[] = [];
+      const params: any[] = [];
+      if (name !== undefined) { updates.push('description = ?'); params.push(name); }
+      if (amount !== undefined) { updates.push('amount = ?'); params.push(-Math.abs(amount)); }
+      if (category_id !== undefined) { updates.push('category_id = ?'); params.push(category_id ?? null); }
+      if (updates.length > 0) {
+        params.push(tiByProduct.id);
+        db.prepare(`UPDATE transaction_items SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+      }
     }
   }
 
-  // Also update product default category
-  const item = db.prepare('SELECT product_id FROM receipt_items WHERE id = ?').get(itemId) as any;
-  if (item?.product_id && category_id) {
-    db.prepare('UPDATE products SET category_id = ? WHERE id = ?').run(category_id, item.product_id);
+  // Update product name and category
+  if (ri?.product_id) {
+    if (name !== undefined) db.prepare('UPDATE products SET name = ? WHERE id = ?').run(name, ri.product_id);
+    if (category_id !== undefined && category_id) db.prepare('UPDATE products SET category_id = ? WHERE id = ?').run(category_id, ri.product_id);
   }
 
   res.json({ ok: true });

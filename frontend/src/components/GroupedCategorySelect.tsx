@@ -21,7 +21,7 @@ export default function GroupedCategorySelect({ categories, value, onChange, cla
   }
 
   return (
-    <select value={value || ''} onChange={e => onChange(e.target.value)} className={className}>
+    <select value={value || ''} onChange={e => onChange(e.target.value)} className={`leading-tight ${className}`}>
       <option value="">{placeholder}</option>
       {groupOrder.map(group => (
         <optgroup key={group} label={group}>

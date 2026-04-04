@@ -286,6 +286,14 @@ router.post('/receipt-scan', upload.single('file'), (req, res) => {
 
       if (matchedTx) {
         db.prepare('UPDATE receipts SET transaction_id = ? WHERE id = ?').run(matchedTx.id, receiptId);
+        // Copy receipt items to transaction items and mark as split
+        const rItems = db.prepare('SELECT * FROM receipt_items WHERE receipt_id = ?').all(receiptId) as any[];
+        db.prepare('DELETE FROM transaction_items WHERE transaction_id = ?').run(matchedTx.id);
+        const insTxItem = db.prepare('INSERT INTO transaction_items (transaction_id, description, amount, category_id, product_id) VALUES (?, ?, ?, ?, ?)');
+        for (const ri of rItems) {
+          insTxItem.run(matchedTx.id, ri.name, -Math.abs(ri.amount), ri.category_id, ri.product_id);
+        }
+        db.prepare('UPDATE transactions SET is_split = 1, category_id = NULL WHERE id = ?').run(matchedTx.id);
       }
     }
 
