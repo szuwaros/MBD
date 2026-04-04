@@ -18,9 +18,18 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app
 
+# Install build tools needed for native modules (better-sqlite3)
+RUN apk add --no-cache python3 make g++
+
 # Install production dependencies for backend
 COPY backend/package.json ./backend/
 RUN cd backend && npm install --production
+
+# Remove build tools to keep image smaller
+RUN apk del python3 make g++
+
+# Install Tesseract OCR with Polish language data + ImageMagick for auto-orient
+RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-pol imagemagick
 
 # Copy built backend
 COPY --from=backend-build /app/backend/dist ./backend/dist

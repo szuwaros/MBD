@@ -4,22 +4,20 @@ import crypto from 'crypto';
 import db from '../db/connection';
 import { getParser } from '../parsers';
 import { parseReceiptJson, ParsedReceipt } from '../parsers/receipt';
+import { parseReceiptImage } from '../parsers/receipt-ocr';
 import iconv from 'iconv-lite';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-function generateHash(accountId: number, date: string, amount: number, description: string): string {
-  const normalized = `${accountId}|${date}|${amount.toFixed(2)}|${description.trim().toLowerCase()}`;
+function generateHash(accountNumber: string, date: string, amount: number, description: string): string {
+  const normalized = `${accountNumber}|${date}|${amount.toFixed(2)}|${description.trim().toLowerCase()}`;
   return crypto.createHash('sha256').update(normalized).digest('hex');
 }
 
 function decodeBuffer(buffer: Buffer): string {
-  // Try UTF-8 first, then Windows-1250 (common for Polish bank exports)
   const utf8 = buffer.toString('utf-8');
-  // Check for BOM
   const content = utf8.charCodeAt(0) === 0xFEFF ? utf8.slice(1) : utf8;
-  // If it looks garbled (common Polish chars missing), try Windows-1250
   if (content.includes('\ufffd') || (!content.includes('ą') && !content.includes('ę') && content.length > 200)) {
     try {
       return iconv.decode(buffer, 'win1250');
@@ -33,34 +31,73 @@ function decodeBuffer(buffer: Buffer): string {
 router.post('/csv', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Plik jest wymagany' });
 
-  const accountId = Number(req.body.account_id);
-  if (!accountId) return res.status(400).json({ error: 'Konto jest wymagane' });
+  const bankId = req.body.bank;
+  if (!bankId) return res.status(400).json({ error: 'Format banku jest wymagany' });
 
-  const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId) as any;
-  if (!account) return res.status(404).json({ error: 'Nie znaleziono konta' });
-
-  const parser = getParser(account.bank);
-  if (!parser) return res.status(400).json({ error: `Brak parsera dla banku: ${account.bank}` });
+  const parser = getParser(bankId);
+  if (!parser) return res.status(400).json({ error: `Brak parsera dla banku: ${bankId}` });
 
   const content = decodeBuffer(req.file.buffer);
   const parsed = parser.parse(content);
 
   if (parsed.length === 0) {
-    return res.status(400).json({ error: 'Nie znaleziono transakcji w pliku. Sprawdź format CSV.' });
+    return res.status(400).json({ error: 'Nie znaleziono transakcji w pliku. Sprawdz format CSV.' });
   }
 
   let imported = 0;
   let skipped = 0;
+  const accountsCreated = new Set<string>();
+
+  const findAccountByNumber = db.prepare('SELECT id FROM accounts WHERE account_number = ?');
+  const insertAccountStmt = db.prepare('INSERT INTO accounts (name, bank, account_number) VALUES (?, ?, ?)');
+
+  function resolveAccountId(accountNumber: string | undefined): number | null {
+    if (!accountNumber) return null;
+    const existing = findAccountByNumber.get(accountNumber) as { id: number } | undefined;
+    if (existing) return existing.id;
+    const result = insertAccountStmt.run(accountNumber, bankId, accountNumber);
+    return Number(result.lastInsertRowid);
+  }
 
   const insertTx = db.prepare(`
-    INSERT OR IGNORE INTO transactions (account_id, date, description, amount, balance_after, type, counterparty, import_hash)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO transactions (account_id, date, description, amount, balance_after, type, counterparty, source_account, dest_account, import_hash, category_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
+
+  const findCategory = db.prepare('SELECT id FROM categories WHERE name = ?');
+  const insertCategory = db.prepare('INSERT INTO categories (name) VALUES (?)');
+
+  function resolveCategoryId(name?: string): number | null {
+    if (!name) return null;
+    const existing = findCategory.get(name) as { id: number } | undefined;
+    if (existing) return existing.id;
+    const result = insertCategory.run(name);
+    return Number(result.lastInsertRowid);
+  }
 
   const importTransactions = db.transaction(() => {
     for (const tx of parsed) {
-      const hash = generateHash(accountId, tx.date, tx.amount, tx.description);
-      const result = insertTx.run(accountId, tx.date, tx.description, tx.amount, tx.balanceAfter ?? null, tx.type ?? null, tx.counterparty ?? null, hash);
+      // Determine the user's account from the transaction:
+      // Expense (amount < 0): source_account is the user's account
+      // Income (amount >= 0): dest_account is the user's account
+      const userAccountNumber = tx.amount < 0 ? tx.sourceAccount : tx.destAccount;
+      const accountId = resolveAccountId(userAccountNumber);
+
+      if (!accountId) {
+        skipped++;
+        continue;
+      }
+
+      if (userAccountNumber) accountsCreated.add(userAccountNumber);
+
+      const hash = generateHash(userAccountNumber || '', tx.date, tx.amount, tx.description);
+      const categoryId = resolveCategoryId(tx.category);
+      const result = insertTx.run(
+        accountId, tx.date, tx.description, tx.amount, tx.balanceAfter ?? null,
+        tx.type ?? null, tx.counterparty ?? null,
+        tx.sourceAccount ?? null, tx.destAccount ?? null,
+        hash, categoryId
+      );
       if (result.changes > 0) {
         imported++;
       } else {
@@ -68,13 +105,19 @@ router.post('/csv', upload.single('file'), (req, res) => {
       }
     }
 
-    db.prepare('INSERT INTO imports (account_id, type, filename, rows_imported, rows_skipped) VALUES (?, ?, ?, ?, ?)')
-      .run(accountId, 'csv', req.file!.originalname, imported, skipped);
+    db.prepare('INSERT INTO imports (type, filename, rows_imported, rows_skipped) VALUES (?, ?, ?, ?)')
+      .run('csv', req.file!.originalname, imported, skipped);
   });
 
   importTransactions();
 
-  res.json({ imported, skipped, total: parsed.length, filename: req.file.originalname });
+  res.json({
+    imported,
+    skipped,
+    total: parsed.length,
+    filename: req.file.originalname,
+    accounts_found: accountsCreated.size,
+  });
 });
 
 router.post('/receipt', upload.single('file'), (req, res) => {
@@ -85,7 +128,7 @@ router.post('/receipt', upload.single('file'), (req, res) => {
     const content = req.file.buffer.toString('utf-8');
     receipt = parseReceiptJson(content);
   } catch {
-    return res.status(400).json({ error: 'Nie udało się sparsować e-paragonu. Oczekiwany format: JSON' });
+    return res.status(400).json({ error: 'Nie udalo sie sparsowac e-paragonu. Oczekiwany format: JSON' });
   }
 
   const importReceipt = db.transaction(() => {
@@ -102,7 +145,6 @@ router.post('/receipt', upload.single('file'), (req, res) => {
     const updateProduct = db.prepare('UPDATE products SET last_price = ?, times_purchased = times_purchased + 1, updated_at = datetime(\'now\') WHERE id = ?');
 
     for (const item of receipt.items) {
-      // Find or create product
       let existing = findProduct.get(item.name) as { id: number; category_id: number | null } | undefined;
       let productId: number;
 
@@ -117,12 +159,10 @@ router.post('/receipt', upload.single('file'), (req, res) => {
 
       insertItem.run(receiptId, item.name, item.quantity, item.unitPrice, item.amount);
 
-      // Update receipt item with product reference
       db.prepare('UPDATE receipt_items SET product_id = ?, category_id = ? WHERE receipt_id = ? AND name = ?')
         .run(productId, existing.category_id, receiptId, item.name);
     }
 
-    // Try to auto-match with a transaction
     const matchedTx = db.prepare(`
       SELECT id FROM transactions
       WHERE ABS(amount + ?) < 0.02
@@ -145,11 +185,132 @@ router.post('/receipt', upload.single('file'), (req, res) => {
   res.json(result);
 });
 
+router.post('/receipt-scan', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Plik jest wymagany' });
+
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+  if (!allowedTypes.includes(req.file.mimetype)) {
+    return res.status(400).json({ error: 'Dozwolone formaty: JPG, PNG, WebP' });
+  }
+
+  let ocrResult;
+  try {
+    ocrResult = parseReceiptImage(req.file.buffer, req.file.mimetype);
+  } catch (err: any) {
+    return res.status(500).json({ error: `Blad OCR: ${err.message}` });
+  }
+
+  if (ocrResult.items.length === 0) {
+    return res.json({
+      storeName: ocrResult.storeName,
+      receiptDate: ocrResult.receiptDate,
+      totalAmount: ocrResult.totalAmount,
+      items: [],
+      rawText: ocrResult.rawText,
+      warning: 'Nie udalo sie wykryc produktow. Sprawdz jakosc zdjecia.',
+    });
+  }
+
+  // Save to database
+  const findCategory = db.prepare('SELECT id FROM categories WHERE name = ?');
+  const insertCategory = db.prepare('INSERT INTO categories (name) VALUES (?)');
+
+  function resolveCategoryId(name: string): number | null {
+    const existing = findCategory.get(name) as { id: number } | undefined;
+    if (existing) return existing.id;
+    try {
+      const result = insertCategory.run(name);
+      return Number(result.lastInsertRowid);
+    } catch {
+      // Category might already exist (race condition)
+      const retry = findCategory.get(name) as { id: number } | undefined;
+      return retry?.id ?? null;
+    }
+  }
+
+  const importScan = db.transaction(() => {
+    const result = db.prepare(`
+      INSERT INTO receipts (store_name, receipt_date, total_amount, source_filename, raw_data)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      ocrResult.storeName, ocrResult.receiptDate, ocrResult.totalAmount,
+      req.file!.originalname, ocrResult.rawText
+    );
+
+    const receiptId = result.lastInsertRowid;
+
+    const insertItem = db.prepare(
+      'INSERT INTO receipt_items (receipt_id, name, quantity, unit_price, amount, category_id) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    const findProduct = db.prepare('SELECT id FROM products WHERE name = ?');
+    const insertProduct = db.prepare('INSERT INTO products (name, category_id, last_price) VALUES (?, ?, ?)');
+    const updateProduct = db.prepare(
+      "UPDATE products SET last_price = ?, times_purchased = times_purchased + 1, updated_at = datetime('now') WHERE id = ?"
+    );
+
+    const findProductFull = db.prepare('SELECT id, category_id FROM products WHERE name = ?');
+
+    for (const item of ocrResult.items) {
+      let productId: number;
+      let categoryId: number | null = null;
+
+      // Category from known product (user-assigned), or null for new products
+      const existing = findProductFull.get(item.name) as { id: number; category_id: number | null } | undefined;
+      if (existing) {
+        productId = existing.id;
+        categoryId = existing.category_id;
+        updateProduct.run(item.amount, productId);
+      } else {
+        const r = insertProduct.run(item.name, null, item.amount);
+        productId = Number(r.lastInsertRowid);
+      }
+
+      insertItem.run(receiptId, item.name, item.quantity, item.unitPrice, item.amount, categoryId);
+
+      db.prepare('UPDATE receipt_items SET product_id = ? WHERE receipt_id = ? AND name = ?')
+        .run(productId, receiptId, item.name);
+    }
+
+    // Auto-match with transaction
+    if (ocrResult.totalAmount && ocrResult.receiptDate) {
+      const matchedTx = db.prepare(`
+        SELECT id FROM transactions
+        WHERE ABS(amount + ?) < 0.5
+          AND date BETWEEN date(?, '-2 day') AND date(?, '+2 day')
+        ORDER BY ABS(amount + ?) ASC, ABS(julianday(date) - julianday(?))
+        LIMIT 1
+      `).get(
+        ocrResult.totalAmount, ocrResult.receiptDate, ocrResult.receiptDate,
+        ocrResult.totalAmount, ocrResult.receiptDate
+      ) as { id: number } | undefined;
+
+      if (matchedTx) {
+        db.prepare('UPDATE receipts SET transaction_id = ? WHERE id = ?').run(matchedTx.id, receiptId);
+      }
+    }
+
+    db.prepare('INSERT INTO imports (type, filename, rows_imported) VALUES (?, ?, ?)')
+      .run('receipt-scan', req.file!.originalname, ocrResult.items.length);
+
+    return Number(receiptId);
+  });
+
+  const receiptId = importScan();
+
+  res.json({
+    receiptId,
+    storeName: ocrResult.storeName,
+    receiptDate: ocrResult.receiptDate,
+    totalAmount: ocrResult.totalAmount,
+    items: ocrResult.items,
+    rawText: ocrResult.rawText,
+  });
+});
+
 router.get('/', (_req, res) => {
   const imports = db.prepare(`
-    SELECT i.*, a.name as account_name
+    SELECT i.*
     FROM imports i
-    LEFT JOIN accounts a ON a.id = i.account_id
     ORDER BY i.imported_at DESC
   `).all();
   res.json(imports);

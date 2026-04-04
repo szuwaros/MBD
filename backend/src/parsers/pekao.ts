@@ -22,9 +22,19 @@ export const pekaoParser: CsvParser = {
     const lines = content.split(/\r?\n/).filter(line => line.trim());
     const results: ParsedTransaction[] = [];
 
-    // PeKaO SA CSV: separator ;
-    // Typical columns: Data operacji;Data waluty;Typ operacji;Opis;Kwota;Waluta;Saldo po operacji
-    // Skip header rows - find the first row that looks like data
+    // Pekao SA CSV format (semicolon-separated):
+    // Col 0: Data księgowania
+    // Col 1: Data waluty
+    // Col 2: Nadawca / Odbiorca
+    // Col 3: Adres nadawcy / odbiorcy
+    // Col 4: Rachunek źródłowy
+    // Col 5: Rachunek docelowy
+    // Col 6: Tytułem
+    // Col 7: Kwota operacji
+    // Col 8: Waluta
+    // Col 9: Numer referencyjny
+    // Col 10: Typ operacji
+
     let dataStarted = false;
 
     for (const line of lines) {
@@ -39,24 +49,29 @@ export const pekaoParser: CsvParser = {
         }
       }
 
-      if (cols.length < 5) continue;
+      if (cols.length < 8) continue;
 
       const date = parsePolishDate(cols[0]);
-      const type = cols[2] || undefined;
-      const description = cols[3] || '';
-      const amount = parsePolishAmount(cols[4]);
+      const counterparty = cols[2] || undefined;
+      const sourceAccount = (cols[4] || '').replace(/^'/, '') || undefined;
+      const destAccount = (cols[5] || '').replace(/^'/, '') || undefined;
+      const description = cols[6] || '';
+      const amount = parsePolishAmount(cols[7]);
+      const type = cols[10] || undefined;
+      const rawCategory = cols[11] || undefined;
+      const category = rawCategory && rawCategory !== 'Bez kategorii' ? rawCategory : undefined;
 
       if (isNaN(amount)) continue;
-
-      const balanceAfter = cols[6] ? parsePolishAmount(cols[6]) : undefined;
 
       results.push({
         date,
         description,
         amount,
-        balanceAfter: isNaN(balanceAfter as number) ? undefined : balanceAfter,
+        counterparty,
         type,
-        counterparty: undefined,
+        category,
+        sourceAccount,
+        destAccount,
       });
     }
 

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api/client';
+import GroupedCategorySelect from './GroupedCategorySelect';
 
 interface SplitItem {
   description: string;
@@ -102,14 +103,13 @@ export default function TransactionSplitModal({ transaction, categories, onClose
                   />
                 </div>
                 <div className="flex gap-2">
-                  <select
+                  <GroupedCategorySelect
+                    categories={categories}
                     value={item.category_id}
-                    onChange={e => updateItem(index, 'category_id', e.target.value)}
+                    onChange={v => updateItem(index, 'category_id', v)}
                     className="flex-1 border rounded px-2 py-1 text-sm"
-                  >
-                    <option value="">Kategoria...</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                    placeholder="Kategoria..."
+                  />
                   <input
                     value={item.product_name}
                     onChange={e => updateItem(index, 'product_name', e.target.value)}

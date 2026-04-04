@@ -39,4 +39,12 @@ router.put('/:id', (req, res) => {
   res.json(product);
 });
 
+router.delete('/:id', (req, res) => {
+  const { id } = req.params;
+  db.prepare('UPDATE transaction_items SET product_id = NULL WHERE product_id = ?').run(id);
+  db.prepare('UPDATE receipt_items SET product_id = NULL WHERE product_id = ?').run(id);
+  db.prepare('DELETE FROM products WHERE id = ?').run(id);
+  res.json({ ok: true });
+});
+
 export default router;

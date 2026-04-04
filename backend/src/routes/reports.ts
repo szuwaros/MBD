@@ -49,6 +49,64 @@ router.get('/by-category', (req, res) => {
   res.json(Array.from(merged.values()).sort((a, b) => b.total - a.total));
 });
 
+router.get('/by-group', (req, res) => {
+  const { from, to, account_id } = req.query;
+  let where = 'WHERE t.amount < 0';
+  const params: any[] = [];
+
+  if (from) { where += ' AND t.date >= ?'; params.push(from); }
+  if (to) { where += ' AND t.date <= ?'; params.push(to); }
+  if (account_id) { where += ' AND t.account_id = ?'; params.push(account_id); }
+
+  // Non-split transactions grouped by category group
+  const direct = db.prepare(`
+    SELECT COALESCE(c.group_name, 'Inne') as group_name,
+           COALESCE(c.name, 'Bez kategorii') as category,
+           COALESCE(c.color, '#6b7280') as color,
+           SUM(ABS(t.amount)) as total
+    FROM transactions t
+    LEFT JOIN categories c ON c.id = t.category_id
+    ${where} AND t.is_split = 0
+    GROUP BY c.group_name, t.category_id
+  `).all(...params);
+
+  // Split transactions by item categories
+  const split = db.prepare(`
+    SELECT COALESCE(c.group_name, 'Inne') as group_name,
+           COALESCE(c.name, 'Bez kategorii') as category,
+           COALESCE(c.color, '#6b7280') as color,
+           SUM(ABS(ti.amount)) as total
+    FROM transaction_items ti
+    JOIN transactions t ON t.id = ti.transaction_id
+    LEFT JOIN categories c ON c.id = ti.category_id
+    ${where} AND t.is_split = 1
+    GROUP BY c.group_name, ti.category_id
+  `).all(...params);
+
+  // Merge and build hierarchical structure
+  const groups = new Map<string, { group: string; total: number; categories: { category: string; color: string; total: number }[] }>();
+  for (const row of [...direct, ...split] as any[]) {
+    let g = groups.get(row.group_name);
+    if (!g) {
+      g = { group: row.group_name, total: 0, categories: [] };
+      groups.set(row.group_name, g);
+    }
+    const existing = g.categories.find(c => c.category === row.category);
+    if (existing) {
+      existing.total += row.total;
+    } else {
+      g.categories.push({ category: row.category, color: row.color, total: row.total });
+    }
+    g.total += row.total;
+  }
+
+  const result = Array.from(groups.values())
+    .map(g => ({ ...g, categories: g.categories.sort((a, b) => b.total - a.total) }))
+    .sort((a, b) => b.total - a.total);
+
+  res.json(result);
+});
+
 router.get('/monthly-trend', (req, res) => {
   const { year, account_id } = req.query;
   const targetYear = year || new Date().getFullYear().toString();

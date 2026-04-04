@@ -89,6 +89,9 @@ export interface ParsedTransaction {
   balanceAfter?: number;
   type?: string;
   counterparty?: string;
+  category?: string;
+  sourceAccount?: string;
+  destAccount?: string;
 }
 
 export interface CsvParser {

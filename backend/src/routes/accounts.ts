@@ -16,18 +16,27 @@ router.get('/', (_req, res) => {
 router.post('/', (req, res) => {
   const { name, bank, account_number } = req.body;
   if (!name || !bank) {
-    return res.status(400).json({ error: 'Nazwa i bank są wymagane' });
+    return res.status(400).json({ error: 'Nazwa i bank sa wymagane' });
   }
   const result = db.prepare('INSERT INTO accounts (name, bank, account_number) VALUES (?, ?, ?)').run(name, bank, account_number || null);
   const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(account);
 });
 
+router.put('/:id', (req, res) => {
+  const { id } = req.params;
+  const { name, bank } = req.body;
+  db.prepare('UPDATE accounts SET name = COALESCE(?, name), bank = COALESCE(?, bank) WHERE id = ?')
+    .run(name || null, bank || null, id);
+  const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(id);
+  res.json(account);
+});
+
 router.delete('/:id', (req, res) => {
   const { id } = req.params;
   const txCount = db.prepare('SELECT COUNT(*) as cnt FROM transactions WHERE account_id = ?').get(id) as { cnt: number };
   if (txCount.cnt > 0) {
-    return res.status(400).json({ error: 'Nie można usunąć konta z transakcjami' });
+    return res.status(400).json({ error: 'Nie mozna usunac konta z transakcjami' });
   }
   db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
   res.json({ ok: true });
