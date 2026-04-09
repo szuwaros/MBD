@@ -6,9 +6,10 @@ interface Props {
   onChange: (value: string) => void;
   className?: string;
   placeholder?: string;
+  amount?: number;
 }
 
-export default function GroupedCategorySelect({ categories, value, onChange, className = '', placeholder = '-' }: Props) {
+export default function GroupedCategorySelect({ categories, value, onChange, className = '', placeholder = '-', amount }: Props) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const ref = useRef<HTMLDivElement>(null);
@@ -38,6 +39,9 @@ export default function GroupedCategorySelect({ categories, value, onChange, cla
   const groupMap = new Map<string, any[]>();
 
   for (const c of categories) {
+    // Filter by amount sign: positive → only income, negative → no income
+    if (amount !== undefined && amount > 0 && c.cat_type !== 'income') continue;
+    if (amount !== undefined && amount < 0 && c.cat_type === 'income') continue;
     if (lower && !c.name.toLowerCase().includes(lower) && !(c.group_name || '').toLowerCase().includes(lower)) continue;
     const group = c.group_name || (c.cat_type === 'income' ? 'Przychody' : c.cat_type === 'transfer' ? 'Finanse' : 'Inne');
     if (!groupMap.has(group)) {

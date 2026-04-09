@@ -2,49 +2,21 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { api } from '../api/client';
 import TransactionSplitModal from '../components/TransactionSplitModal';
 import GroupedCategorySelect from '../components/GroupedCategorySelect';
+import NoteCell from '../components/NoteCell';
 import DataTable, { Column } from '../components/DataTable';
 import DateRangeSelector from '../components/DateRangeSelector';
-
-function NoteCell({ txId, note, onSave }: { txId: number; note: string | null; onSave: () => void }) {
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(note || '');
-
-  const save = async () => {
-    await api.updateTransaction(txId, { note: value || null });
-    setEditing(false);
-    onSave();
-  };
-
-  if (editing) {
-    return (
-      <input
-        value={value}
-        onChange={e => setValue(e.target.value)}
-        onBlur={save}
-        onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
-        className="border rounded px-1 py-0.5 text-xs w-full"
-        autoFocus
-      />
-    );
-  }
-
-  return (
-    <span
-      onClick={() => { setValue(note || ''); setEditing(true); }}
-      className={`cursor-pointer text-xs block truncate max-w-[140px] ${note ? 'text-gray-600' : 'text-gray-300 italic hover:text-gray-400'}`}
-      title={note || 'Kliknij aby dodać notatkę'}
-    >
-      {note || '+'}
-    </span>
-  );
-}
 
 export default function Transactions() {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
-  const [filters, setFilters] = useState({ account_id: '', from: '', to: '', category_id: '', search: '', amount_min: '', amount_max: '' });
+  const [filters, setFilters] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem('tx:filters');
+      return raw ? JSON.parse(raw) : { account_id: '', from: '', to: '', category_id: '', search: '', amount_min: '', amount_max: '' };
+    } catch { return { account_id: '', from: '', to: '', category_id: '', search: '', amount_min: '', amount_max: '' }; }
+  });
   const [splitTx, setSplitTx] = useState<any>(null);
   const fetchParamsRef = useRef<any>({});
 
@@ -62,6 +34,7 @@ export default function Transactions() {
   }, [filters]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { sessionStorage.setItem('tx:filters', JSON.stringify(filters)); }, [filters]);
   useEffect(() => { api.getAccounts().then(setAccounts); api.getCategories().then(setCategories); }, []);
 
   const handleCategoryChange = async (txId: number, categoryId: string) => {
@@ -120,11 +93,52 @@ export default function Transactions() {
   // Selection & bulk actions
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkCategoryId, setBulkCategoryId] = useState('');
+  const [selectedChildren, setSelectedChildren] = useState<any[]>([]);
+  const [bulkChildCategoryId, setBulkChildCategoryId] = useState('');
 
   const handleBulkCategory = async () => {
     if (selectedIds.length === 0 || !bulkCategoryId) return;
     await api.batchUpdateCategory(selectedIds, Number(bulkCategoryId));
     setBulkCategoryId('');
+    load();
+  };
+
+  const handleBulkChildCategory = async () => {
+    if (selectedChildren.length === 0 || !bulkChildCategoryId) return;
+    const catId = Number(bulkChildCategoryId);
+
+    // Group split items by parent transaction
+    const splitByTx = new Map<number, any[]>();
+    const receiptItems: { receiptId: number; itemId: number }[] = [];
+
+    for (const child of selectedChildren) {
+      if (child._type === 'split' && child._txId) {
+        if (!splitByTx.has(child._txId)) splitByTx.set(child._txId, []);
+        splitByTx.get(child._txId)!.push(child);
+      } else if (child._type === 'receipt' && child._receiptId) {
+        receiptItems.push({ receiptId: child._receiptId, itemId: child.id });
+      }
+    }
+
+    // Update split items per transaction
+    for (const [txId, selectedItems] of splitByTx) {
+      const tx = transactions.find(t => t.id === txId);
+      if (!tx?.items) continue;
+      const selectedItemIds = new Set(selectedItems.map(s => s.id));
+      const updatedItems = tx.items.map((item: any) => ({
+        description: item.description,
+        amount: item.amount,
+        category_id: selectedItemIds.has(item.id) ? catId : item.category_id,
+        product_name: item.product_name,
+      }));
+      await api.splitTransaction(txId, updatedItems);
+    }
+
+    // Update receipt items
+    await Promise.all(receiptItems.map(ri => api.updateReceiptItem(ri.receiptId, ri.itemId, { category_id: catId })));
+
+    setBulkChildCategoryId('');
+    setSelectedChildren([]);
     load();
   };
 
@@ -191,7 +205,7 @@ export default function Transactions() {
             </span>
           );
         }
-        return <GroupedCategorySelect categories={categories} value={tx.category_id || ''} onChange={v => handleCategoryChange(tx.id, v)} className="border rounded px-1 py-0.5 text-xs" />;
+        return <GroupedCategorySelect categories={categories} value={tx.category_id || ''} onChange={v => handleCategoryChange(tx.id, v)} className="border rounded px-1 py-0.5 text-xs" amount={tx.amount} />;
       },
     },
     {
@@ -242,6 +256,7 @@ export default function Transactions() {
           value={item.category_id || ''}
           onChange={v => handleItemCategoryChange(item._txId, item.id, v)}
           className="border rounded px-1 py-0.5 text-xs"
+          amount={Number(item.amount)}
         />
       ) : item._receiptId ? (
         <GroupedCategorySelect
@@ -249,6 +264,7 @@ export default function Transactions() {
           value={item.category_id || ''}
           onChange={v => handleReceiptItemCategoryChange(item._receiptId, item.id, v)}
           className="border rounded px-1 py-0.5 text-xs"
+          amount={Number(item.amount)}
         />
       ) : (
         <span className="text-gray-300 text-xs">{item.category_name || 'brak'}</span>
@@ -336,11 +352,22 @@ export default function Transactions() {
 
       {selectedIds.length > 0 && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 mb-2 flex items-center gap-3 text-xs">
-          <span className="text-blue-700 font-medium">Zaznaczono: {selectedIds.length}</span>
+          <span className="text-blue-700 font-medium">Zaznaczono: {selectedIds.length} transakcji</span>
           <div className="flex items-center gap-1">
             <span className="text-gray-500">Kategoria:</span>
             <GroupedCategorySelect categories={categories} value={bulkCategoryId} onChange={setBulkCategoryId} placeholder="Wybierz..." />
             <button onClick={handleBulkCategory} disabled={!bulkCategoryId} className="px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-30">Zastosuj</button>
+          </div>
+        </div>
+      )}
+
+      {selectedChildren.length > 0 && (
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-2 mb-2 flex items-center gap-3 text-xs">
+          <span className="text-purple-700 font-medium">Zaznaczono: {selectedChildren.length} pozycji</span>
+          <div className="flex items-center gap-1">
+            <span className="text-gray-500">Kategoria:</span>
+            <GroupedCategorySelect categories={categories} value={bulkChildCategoryId} onChange={setBulkChildCategoryId} placeholder="Wybierz..." />
+            <button onClick={handleBulkChildCategory} disabled={!bulkChildCategoryId} className="px-2 py-0.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-30">Zastosuj</button>
           </div>
         </div>
       )}
@@ -359,6 +386,9 @@ export default function Transactions() {
         getChildRows={getChildRows}
         childColumns={childCols}
         childLabel={tx => tx.receipt ? `Paragon: ${tx.receipt.store_name} (${tx.receipt.receipt_date})` : tx.is_split ? 'Pozycje rozbicia:' : undefined}
+        childSelectable
+        onChildSelectionChange={setSelectedChildren}
+        storageKey="transactions"
       />
 
       {splitTx && (

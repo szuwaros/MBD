@@ -9,7 +9,6 @@ const navItems = [
   { to: '/categories', label: 'Kategorie' },
   { to: '/receipts', label: 'Paragony' },
   { to: '/products', label: 'Produkty' },
-  { to: '/reports', label: 'Raporty' },
 ];
 
 export default function Layout() {

@@ -7,7 +7,6 @@ import Transactions from './pages/Transactions';
 import Categories from './pages/Categories';
 import Receipts from './pages/Receipts';
 import Products from './pages/Products';
-import Reports from './pages/Reports';
 
 export default function App() {
   return (
@@ -20,7 +19,6 @@ export default function App() {
         <Route path="/categories" element={<Categories />} />
         <Route path="/receipts" element={<Receipts />} />
         <Route path="/products" element={<Products />} />
-        <Route path="/reports" element={<Reports />} />
       </Route>
     </Routes>
   );

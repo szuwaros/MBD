@@ -1,9 +1,12 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '../api/client';
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { PieChart, Pie, Cell, BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 import CategoryIcon from '../components/CategoryIcon';
 import GroupedCategorySelect from '../components/GroupedCategorySelect';
+import NoteCell from '../components/NoteCell';
 import DateRangeSelector from '../components/DateRangeSelector';
+
+const ACCOUNT_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#a855f7', '#ec4899', '#6366f1', '#14b8a6'];
 
 const MONTHS = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'];
 
@@ -19,6 +22,8 @@ export default function Dashboard() {
   const [categories, setCategories] = useState<any[]>([]);
   const [groupData, setGroupData] = useState<any[]>([]);
   const [monthlyData, setMonthlyData] = useState<any[]>([]);
+  const [balanceChartData, setBalanceChartData] = useState<any[]>([]);
+  const [balanceAccountNames, setBalanceAccountNames] = useState<string[]>([]);
 
   // Drill state
   const [drillGroup, setDrillGroup] = useState<string | null>(null);
@@ -32,15 +37,17 @@ export default function Dashboard() {
   const initTo = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
   const [from, setFrom] = useState(initFrom);
   const [to, setTo] = useState(initTo);
+  const [accountId, setAccountId] = useState('');
   const [excludeTransfers, setExcludeTransfers] = useState(true);
 
   const dateParams = useCallback((): Record<string, string> => {
     const p: Record<string, string> = {};
     if (from) p.from = from;
     if (to) p.to = to;
+    if (accountId) p.account_id = accountId;
     if (!excludeTransfers) p.exclude_transfers = '0';
     return p;
-  }, [from, to, excludeTransfers]);
+  }, [from, to, accountId, excludeTransfers]);
 
   const loadData = useCallback(() => {
     const params = dateParams();
@@ -51,6 +58,7 @@ export default function Dashboard() {
 
     const trendYear = from ? from.substring(0, 4) : String(now.getFullYear());
     const trendParams: Record<string, string> = { year: trendYear };
+    if (accountId) trendParams.account_id = accountId;
     if (!excludeTransfers) trendParams.exclude_transfers = '0';
     api.getMonthlyTrend(trendParams).then(data => {
       const byMonth = new Map(data.map((d: any) => [d.month, d]));
@@ -60,6 +68,43 @@ export default function Dashboard() {
         return { month: m, monthLabel: label, expenses: d?.expenses || 0, income: d?.income || 0 };
       });
       setMonthlyData(full);
+    });
+
+    // Balance history — multi-account lines + total
+    const balanceParams: Record<string, string> = {};
+    if (from) balanceParams.from = from;
+    if (to) balanceParams.to = to;
+    if (accountId) balanceParams.account_id = accountId;
+    api.getBalanceHistory(balanceParams).then((raw: any[]) => {
+      // Pivot: { date -> { account1: bal, account2: bal, ... , Suma: total } }
+      const acctNames = new Set<string>();
+      const byDate = new Map<string, Record<string, number>>();
+      for (const r of raw) {
+        acctNames.add(r.account_name);
+        if (!byDate.has(r.date)) byDate.set(r.date, {});
+        byDate.get(r.date)![r.account_name] = r.balance;
+      }
+      const names = Array.from(acctNames);
+      setBalanceAccountNames(names);
+
+      // Forward-fill balances and compute total
+      const dates = Array.from(byDate.keys()).sort();
+      const lastKnown: Record<string, number> = {};
+      const chartData = dates.map(date => {
+        const entry: Record<string, any> = { date };
+        let total = 0;
+        for (const name of names) {
+          if (byDate.get(date)![name] !== undefined) {
+            lastKnown[name] = byDate.get(date)![name];
+          }
+          const val = lastKnown[name] ?? 0;
+          entry[name] = val;
+          total += val;
+        }
+        entry['Suma'] = Math.round(total * 100) / 100;
+        return entry;
+      });
+      setBalanceChartData(chartData);
     });
   }, [dateParams]);
 
@@ -119,6 +164,12 @@ export default function Dashboard() {
 
       <div className="bg-white rounded-lg shadow p-3 mb-4 flex items-center gap-4 flex-wrap">
         <DateRangeSelector from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} />
+        <div>
+          <select value={accountId} onChange={e => setAccountId(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
+            <option value="">Wszystkie konta</option>
+            {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </div>
         <label className="flex items-center gap-1.5 text-xs text-gray-500 ml-auto cursor-pointer select-none">
           <input type="checkbox" checked={excludeTransfers} onChange={e => setExcludeTransfers(e.target.checked)} className="rounded" />
           Pomiń przelewy wewnętrzne
@@ -142,7 +193,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6 items-start">
         {/* Pie chart with drill-down */}
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between mb-2">
@@ -156,10 +207,10 @@ export default function Dashboard() {
 
           {!drillCategory && pieData.length > 0 && (
             <>
-              <ResponsiveContainer width="100%" height={240}>
+              <ResponsiveContainer width="100%" height={200}>
                 <PieChart>
                   <Pie
-                    data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={85}
+                    data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={75}
                     isAnimationActive={false}
                     label={({ name, value }) => `${name}: ${value.toFixed(0)}`}
                     onClick={(_: any, idx: number) => {
@@ -177,7 +228,7 @@ export default function Dashboard() {
                   <Tooltip formatter={(value: number) => `${value.toFixed(2)} PLN`} />
                 </PieChart>
               </ResponsiveContainer>
-              <div className="max-h-36 overflow-y-auto">
+              <div>
                 <table className="w-full text-xs">
                   <tbody>
                     {pieData.map((d: any, i: number) => (
@@ -197,6 +248,12 @@ export default function Dashboard() {
                         <td className="py-0.5 px-1 text-right text-gray-300 w-10">{pieTotal > 0 ? `${(d.value / pieTotal * 100).toFixed(0)}%` : ''}</td>
                       </tr>
                     ))}
+                    <tr className="border-t font-medium text-xs">
+                      <td></td>
+                      <td className="py-0.5 px-1">Razem</td>
+                      <td className="py-0.5 px-1 text-right font-mono">{pieTotal.toFixed(2)}</td>
+                      <td></td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -221,6 +278,7 @@ export default function Dashboard() {
                       <th className="text-left py-0.5 px-1">Kontrahent</th>
                       <th className="text-right py-0.5 px-1">Kwota</th>
                       <th className="text-left py-0.5 px-1 w-28">Kategoria</th>
+                      <th className="text-left py-0.5 px-1">Notatka</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -232,8 +290,9 @@ export default function Dashboard() {
                           <span className={tx.amount < 0 ? 'text-red-600' : 'text-green-600'}>{tx.amount.toFixed(2)}</span>
                         </td>
                         <td className="py-0.5 px-1">
-                          <GroupedCategorySelect categories={categories} value={tx.category_id || ''} onChange={v => handleCategoryChange(tx.id, v)} />
+                          <GroupedCategorySelect categories={categories} value={tx.category_id || ''} onChange={v => handleCategoryChange(tx.id, v)} amount={tx.amount} />
                         </td>
+                        <td className="py-0.5 px-1"><NoteCell txId={tx.id} note={tx.note} onSave={() => drillCategory && loadTransactions(drillCategory.id)} /></td>
                       </tr>
                     ))}
                   </tbody>
@@ -261,6 +320,28 @@ export default function Dashboard() {
             </ResponsiveContainer>
           )}
         </div>
+      </div>
+
+      {/* Balance history — multi-account + total */}
+      <div className="bg-white rounded-lg shadow p-4">
+        <h2 className="text-base font-semibold mb-3">Historia sald</h2>
+        {balanceChartData.length === 0 ? (
+          <p className="text-gray-400 text-center py-8">Brak danych</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={balanceChartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="date" />
+              <YAxis />
+              <Tooltip formatter={(value: number) => `${value.toFixed(2)} PLN`} />
+              <Legend />
+              {balanceAccountNames.map((name, i) => (
+                <Line key={name} type="monotone" dataKey={name} stroke={ACCOUNT_COLORS[i % ACCOUNT_COLORS.length]} dot={false} isAnimationActive={false} strokeWidth={1.5} />
+              ))}
+              <Line type="monotone" dataKey="Suma" stroke="#1e293b" dot={false} isAnimationActive={false} strokeWidth={2.5} strokeDasharray="5 3" />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
       </div>
 
     </div>

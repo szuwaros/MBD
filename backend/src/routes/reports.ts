@@ -148,7 +148,7 @@ router.get('/balance-history', (req, res) => {
   if (account_id) {
     accounts = db.prepare('SELECT * FROM accounts WHERE id = ?').all(account_id) as any[];
   } else {
-    accounts = db.prepare('SELECT * FROM accounts WHERE initial_balance_date IS NOT NULL').all() as any[];
+    accounts = db.prepare('SELECT * FROM accounts').all() as any[];
   }
 
   if (accounts.length === 0) {

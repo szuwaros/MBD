@@ -227,7 +227,7 @@ export default function Receipts() {
                             <td className="py-0.5"><input type="number" value={editItem.unit_price} onChange={e => setEditItem({ ...editItem, unit_price: parseFloat(e.target.value) })} className="border rounded px-1 py-0.5 text-xs w-20 text-right" step="0.01" /></td>
                             <td className="py-0.5"><input type="number" value={editItem.amount} onChange={e => setEditItem({ ...editItem, amount: parseFloat(e.target.value) })} className="border rounded px-1 py-0.5 text-xs w-20 text-right" step="0.01" /></td>
                             <td className="py-0.5 pl-2">
-                              <GroupedCategorySelect categories={categories} value={editItem.category_id || ''} onChange={v => setEditItem({ ...editItem, category_id: v ? Number(v) : null })} className="border rounded px-1 py-0.5 text-xs w-full" />
+                              <GroupedCategorySelect categories={categories} value={editItem.category_id || ''} onChange={v => setEditItem({ ...editItem, category_id: v ? Number(v) : null })} className="border rounded px-1 py-0.5 text-xs w-full" amount={-1} />
                             </td>
                             <td className="py-0.5 text-right">
                               <button onClick={handleUpdateItem} className="text-green-600 text-xs font-medium">Zapisz</button>
@@ -243,7 +243,7 @@ export default function Receipts() {
                             <td className="py-0.5 text-right font-mono text-xs">{item.unit_price?.toFixed(2) ?? '-'}</td>
                             <td className="py-0.5 text-right font-mono text-xs">{item.amount.toFixed(2)}</td>
                             <td className="py-0.5 pl-2">
-                              <GroupedCategorySelect categories={categories} value={item.category_id || ''} onChange={v => handleCategoryChange(item.id, v)} className="border rounded px-1 py-0.5 text-xs w-full" />
+                              <GroupedCategorySelect categories={categories} value={item.category_id || ''} onChange={v => handleCategoryChange(item.id, v)} className="border rounded px-1 py-0.5 text-xs w-full" amount={-1} />
                             </td>
                             <td className="py-0.5 text-right">
                               <button onClick={() => { setEditItemId(item.id); setEditItem({ name: item.name, quantity: item.quantity, unit_price: item.unit_price, amount: item.amount, category_id: item.category_id }); }} className="text-blue-500 text-xs">Edytuj</button>

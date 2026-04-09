@@ -109,6 +109,7 @@ export default function TransactionSplitModal({ transaction, categories, onClose
                     onChange={v => updateItem(index, 'category_id', v)}
                     className="flex-1 border rounded px-2 py-1 text-sm"
                     placeholder="Kategoria..."
+                    amount={transaction.amount}
                   />
                   <input
                     value={item.product_name}

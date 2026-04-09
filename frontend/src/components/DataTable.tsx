@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, ReactNode } from 'react';
+import { useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 
 const PAGE_SIZES = [50, 100, 200, 1000];
 
@@ -30,6 +30,11 @@ interface Props<T> {
   getChildRows?: (row: T) => any[] | undefined;
   childColumns?: Column<any>[];
   childLabel?: (row: T) => string | undefined;
+  // Child row selection
+  childSelectable?: boolean;
+  onChildSelectionChange?: (children: any[]) => void;
+  // Persist table state in sessionStorage under this key
+  storageKey?: string;
 }
 
 export default function DataTable<T>({
@@ -49,12 +54,33 @@ export default function DataTable<T>({
   getChildRows,
   childColumns,
   childLabel,
+  childSelectable = false,
+  onChildSelectionChange,
+  storageKey,
 }: Props<T>) {
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(defaultPageSize);
-  const [sort, setSort] = useState(defaultSort);
+  const loadStored = () => {
+    if (!storageKey) return null;
+    try {
+      const raw = sessionStorage.getItem(`dt:${storageKey}`);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  };
+  const stored = loadStored();
+
+  const [page, setPage] = useState(stored?.page ?? 0);
+  const [pageSize, setPageSize] = useState(stored?.pageSize ?? defaultPageSize);
+  const [sort, setSort] = useState(stored?.sort ?? defaultSort);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [expandedText, setExpandedText] = useState<Set<number>>(new Set());
+  const [selectedChildren, setSelectedChildren] = useState<Map<string, any>>(new Map());
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Persist table state
+  useEffect(() => {
+    if (!storageKey) return;
+    sessionStorage.setItem(`dt:${storageKey}`, JSON.stringify({ page, pageSize, sort }));
+  }, [storageKey, page, pageSize, sort]);
 
   const isServerSide = !!onFetch;
 
@@ -70,7 +96,16 @@ export default function DataTable<T>({
   }, [onFetch, page, pageSize, sort]);
 
   useEffect(() => { triggerFetch(); }, [triggerFetch]);
-  useEffect(() => { setSelected(new Set()); onSelectionChange?.([]); }, [data]);
+  useEffect(() => {
+    setSelected(new Set()); onSelectionChange?.([]); setSelectedChildren(new Map()); onChildSelectionChange?.([]);
+    // Restore scroll position after data loads
+    if (storageKey && scrollRef.current) {
+      try {
+        const scrollTop = Number(sessionStorage.getItem(`dt:${storageKey}:scroll`) || 0);
+        if (scrollTop > 0) setTimeout(() => { scrollRef.current?.scrollTo(0, scrollTop); }, 0);
+      } catch {}
+    }
+  }, [data]);
 
   const processedData = isServerSide ? data : (() => {
     let sorted = [...data];
@@ -118,6 +153,33 @@ export default function DataTable<T>({
     }
   };
 
+  const childKey = (parentId: number, child: any, idx: number) => `${parentId}:${child.id ?? idx}:${child._type || ''}`;
+
+  const toggleChildSelect = (parentId: number, child: any, idx: number) => {
+    setSelectedChildren(prev => {
+      const next = new Map(prev);
+      const key = childKey(parentId, child, idx);
+      if (next.has(key)) next.delete(key); else next.set(key, child);
+      onChildSelectionChange?.([...next.values()]);
+      return next;
+    });
+  };
+
+  const toggleAllChildren = (parentId: number, children: any[]) => {
+    setSelectedChildren(prev => {
+      const next = new Map(prev);
+      const keys = children.map((c, i) => childKey(parentId, c, i));
+      const allSelected = keys.every(k => next.has(k));
+      if (allSelected) {
+        keys.forEach(k => next.delete(k));
+      } else {
+        children.forEach((c, i) => next.set(keys[i], c));
+      }
+      onChildSelectionChange?.([...next.values()]);
+      return next;
+    });
+  };
+
   const handleDelete = () => {
     if (selected.size === 0 || !onDelete) return;
     if (!confirm(`Usunac ${selected.size} rekordow?`)) return;
@@ -141,6 +203,14 @@ export default function DataTable<T>({
 
   const colCount = columns.length + (selectable ? 1 : 0) + (hasExpand ? 1 : 0);
 
+  const toggleTextExpand = (id: number) => {
+    setExpandedText(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
   const toggleExpand = (id: number) => {
     setExpanded(prev => {
       const next = new Set(prev);
@@ -159,7 +229,7 @@ export default function DataTable<T>({
         </div>
       )}
 
-      <div className="bg-white rounded-lg shadow overflow-auto max-h-[80vh]">
+      <div ref={scrollRef} className="bg-white rounded-lg shadow overflow-auto max-h-[80vh]" onScroll={storageKey ? () => { if (scrollRef.current) sessionStorage.setItem(`dt:${storageKey}:scroll`, String(scrollRef.current.scrollTop)); } : undefined}>
         <table className="w-full text-sm">
           <thead className="bg-gray-50 sticky top-0 z-10">
             <tr>
@@ -199,7 +269,7 @@ export default function DataTable<T>({
               const label = isExpanded && childLabel ? childLabel(row) : undefined;
               return (
                 <>
-                <tr key={id} className={`border-t hover:bg-gray-50 ${selected.has(id) ? 'bg-blue-50' : ''}`}>
+                <tr key={id} className={`border-t hover:bg-gray-50 ${selected.has(id) ? 'bg-blue-50' : ''}`} onDoubleClick={() => toggleTextExpand(id)}>
                   {hasExpand && (
                     <td className="px-1 py-1 text-center">
                       {canExpand && (
@@ -222,11 +292,16 @@ export default function DataTable<T>({
                       />
                     </td>
                   )}
-                  {columns.map(col => (
-                    <td key={col.key} className={col.className || 'px-2 py-1'}>
-                      {col.render(row)}
-                    </td>
-                  ))}
+                  {columns.map(col => {
+                    const cls = col.className || 'px-2 py-1';
+                    const textExpanded = expandedText.has(id);
+                    const tdClass = textExpanded ? cls.replace(/truncate/g, '').replace(/whitespace-nowrap/g, '') + ' whitespace-normal break-words' : cls;
+                    return (
+                      <td key={col.key} className={tdClass}>
+                        {col.render(row)}
+                      </td>
+                    );
+                  })}
                 </tr>
                 {isExpanded && hasFreeExpand && (
                   <tr key={`${id}-expanded`} className="bg-gray-50/70">
@@ -239,13 +314,36 @@ export default function DataTable<T>({
                   <>
                   {label && (
                     <tr key={`${id}-label`} className="bg-purple-50/50">
-                      <td colSpan={colCount} className="px-6 py-1 text-xs text-gray-400">{label}</td>
+                      {hasExpand && <td></td>}
+                      {selectable && childSelectable && (
+                        <td className="px-2 py-1">
+                          <input
+                            type="checkbox"
+                            checked={children.length > 0 && children.every((c: any, i: number) => selectedChildren.has(childKey(id, c, i)))}
+                            onChange={() => toggleAllChildren(id, children)}
+                            className="rounded"
+                            title="Zaznacz wszystkie pozycje"
+                          />
+                        </td>
+                      )}
+                      {selectable && !childSelectable && <td></td>}
+                      <td colSpan={columns.length} className="px-3 py-1 text-xs text-gray-400">{label}</td>
                     </tr>
                   )}
                   {children.map((child: any, ci: number) => (
-                    <tr key={`${id}-child-${child.id ?? ci}`} className="bg-purple-50/30 border-t border-gray-100">
+                    <tr key={`${id}-child-${child.id ?? ci}`} className={`bg-purple-50/30 border-t border-gray-100 ${selectedChildren.has(childKey(id, child, ci)) ? 'bg-blue-50' : ''}`}>
                       {hasExpand && <td></td>}
-                      {selectable && <td></td>}
+                      {selectable && childSelectable && (
+                        <td className="px-2 py-0.5">
+                          <input
+                            type="checkbox"
+                            checked={selectedChildren.has(childKey(id, child, ci))}
+                            onChange={() => toggleChildSelect(id, child, ci)}
+                            className="rounded"
+                          />
+                        </td>
+                      )}
+                      {selectable && !childSelectable && <td></td>}
                       {columns.map((col, colIdx) => {
                         const childCol = childColumns!.find(cc => cc.key === col.key);
                         return (
