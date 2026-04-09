@@ -5,6 +5,7 @@ import db from '../db/connection';
 import { getParser } from '../parsers';
 import { parseReceiptJson, ParsedReceipt } from '../parsers/receipt';
 import { parseReceiptImage } from '../parsers/receipt-ocr';
+import { detectPdfBank, parseAliorPdf, parseBnpParibasPdf } from '../parsers/pdf-bank';
 import iconv from 'iconv-lite';
 
 const router = Router();
@@ -46,6 +47,7 @@ router.post('/csv', upload.single('file'), (req, res) => {
 
   let imported = 0;
   let skipped = 0;
+  const skippedDetails: { date: string; amount: number; description: string; reason: string }[] = [];
   const accountsCreated = new Set<string>();
 
   const findAccountByNumber = db.prepare('SELECT id FROM accounts WHERE account_number = ?');
@@ -85,6 +87,7 @@ router.post('/csv', upload.single('file'), (req, res) => {
 
       if (!accountId) {
         skipped++;
+        skippedDetails.push({ date: tx.date, amount: tx.amount, description: tx.description, reason: 'brak konta' });
         continue;
       }
 
@@ -102,6 +105,7 @@ router.post('/csv', upload.single('file'), (req, res) => {
         imported++;
       } else {
         skipped++;
+        skippedDetails.push({ date: tx.date, amount: tx.amount, description: tx.description, reason: 'duplikat' });
       }
     }
 
@@ -114,9 +118,100 @@ router.post('/csv', upload.single('file'), (req, res) => {
   res.json({
     imported,
     skipped,
+    skippedDetails: skippedDetails.length > 0 ? skippedDetails : undefined,
     total: parsed.length,
     filename: req.file.originalname,
     accounts_found: accountsCreated.size,
+  });
+});
+
+// PDF bank statement import
+router.post('/pdf', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Plik jest wymagany' });
+
+  let pdfText: string;
+  try {
+    const pdfParse = require('pdf-parse');
+    const data = await pdfParse(req.file.buffer);
+    pdfText = data.text;
+  } catch (e: any) {
+    return res.status(400).json({ error: 'Nie udało się odczytać PDF: ' + e.message });
+  }
+
+  const bankId = req.body.bank || detectPdfBank(pdfText);
+  if (!bankId) {
+    return res.status(400).json({ error: 'Nie rozpoznano banku. Wybierz format ręcznie.', detectedText: pdfText.substring(0, 500) });
+  }
+
+  let parsed: { transactions: any[]; accountNumber: string | null };
+  switch (bankId) {
+    case 'alior': parsed = parseAliorPdf(pdfText); break;
+    case 'bnpparibas': parsed = parseBnpParibasPdf(pdfText); break;
+    default:
+      return res.status(400).json({ error: `Brak parsera PDF dla banku: ${bankId}` });
+  }
+
+  if (parsed.transactions.length === 0) {
+    return res.status(400).json({ error: 'Nie znaleziono transakcji w PDF.', rawText: pdfText.substring(0, 2000) });
+  }
+
+  let imported = 0;
+  let skipped = 0;
+  const skippedDetails: { date: string; amount: number; description: string; reason: string }[] = [];
+
+  const findAccountByNumber = db.prepare('SELECT id FROM accounts WHERE account_number = ?');
+  const insertAccountStmt = db.prepare('INSERT INTO accounts (name, bank, account_number, account_type) VALUES (?, ?, ?, ?)');
+
+  function resolveAccountId(accountNumber: string | undefined): number | null {
+    if (!accountNumber) return null;
+    const existing = findAccountByNumber.get(accountNumber) as { id: number } | undefined;
+    if (existing) return existing.id;
+    const result = insertAccountStmt.run(accountNumber, bankId, accountNumber, 'bank');
+    return Number(result.lastInsertRowid);
+  }
+
+  const insertTx = db.prepare(`
+    INSERT OR IGNORE INTO transactions (account_id, date, description, amount, balance_after, type, counterparty, source_account, dest_account, import_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const importTransactions = db.transaction(() => {
+    for (const tx of parsed.transactions) {
+      const userAccountNumber = tx.amount < 0 ? tx.sourceAccount : tx.destAccount;
+      const accountId = resolveAccountId(userAccountNumber || parsed.accountNumber || undefined);
+
+      if (!accountId) {
+        skipped++;
+        skippedDetails.push({ date: tx.date, amount: tx.amount, description: tx.description, reason: 'brak konta' });
+        continue;
+      }
+
+      const hash = generateHash(userAccountNumber || parsed.accountNumber || '', tx.date, tx.amount, tx.description);
+      const result = insertTx.run(
+        accountId, tx.date, tx.description, tx.amount, tx.balanceAfter ?? null,
+        tx.type ?? null, tx.counterparty ?? null,
+        tx.sourceAccount ?? null, tx.destAccount ?? null, hash
+      );
+      if (result.changes > 0) imported++;
+      else {
+        skipped++;
+        skippedDetails.push({ date: tx.date, amount: tx.amount, description: tx.description, reason: 'duplikat' });
+      }
+    }
+
+    db.prepare('INSERT INTO imports (type, filename, rows_imported, rows_skipped) VALUES (?, ?, ?, ?)')
+      .run('pdf', req.file!.originalname, imported, skipped);
+  });
+
+  importTransactions();
+
+  res.json({
+    imported,
+    skipped,
+    skippedDetails: skippedDetails.length > 0 ? skippedDetails : undefined,
+    total: parsed.transactions.length,
+    filename: req.file!.originalname,
+    bank: bankId,
   });
 });
 

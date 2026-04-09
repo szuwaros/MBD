@@ -9,16 +9,20 @@ const BANK_FORMATS = [
 
 const TYPE_BADGES: Record<string, { bg: string; text: string; label: string }> = {
   csv: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'CSV' },
+  pdf: { bg: 'bg-indigo-100', text: 'text-indigo-700', label: 'PDF' },
   receipt: { bg: 'bg-purple-100', text: 'text-purple-700', label: 'E-paragon' },
   'receipt-scan': { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Skan paragonu' },
 };
 
 export default function Import() {
   const [bank, setBank] = useState('pekao');
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [pdfFiles, setPdfFiles] = useState<File[]>([]);
+  const [pdfBank, setPdfBank] = useState('');
+  const [pdfResults, setPdfResults] = useState<any[]>([]);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [scanFile, setScanFile] = useState<File | null>(null);
-  const [result, setResult] = useState<any>(null);
+  const [results, setResults] = useState<any[]>([]);
   const [receiptResult, setReceiptResult] = useState<any>(null);
   const [scanResult, setScanResult] = useState<any>(null);
   const [error, setError] = useState('');
@@ -31,15 +35,42 @@ export default function Import() {
 
   const handleCsvImport = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file || !bank) return;
-    setError(''); setResult(null); setLoading(true);
+    if (files.length === 0 || !bank) return;
+    setError(''); setResults([]); setLoading(true);
+    const allResults: any[] = [];
     try {
-      const res = await api.importCsv(file, bank);
-      if (res.error) throw new Error(res.error);
-      setResult(res);
-      setFile(null);
+      for (const f of files) {
+        const res = await api.importCsv(f, bank);
+        if (res.error) throw new Error(`${f.name}: ${res.error}`);
+        allResults.push(res);
+      }
+      setResults(allResults);
+      setFiles([]);
       api.getImports().then(setImports);
     } catch (err: any) {
+      setResults(allResults);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePdfImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pdfFiles.length === 0) return;
+    setError(''); setPdfResults([]); setLoading(true);
+    const allResults: any[] = [];
+    try {
+      for (const f of pdfFiles) {
+        const res = await api.importPdf(f, pdfBank || undefined);
+        if (res.error) throw new Error(`${f.name}: ${res.error}`);
+        allResults.push(res);
+      }
+      setPdfResults(allResults);
+      setPdfFiles([]);
+      api.getImports().then(setImports);
+    } catch (err: any) {
+      setPdfResults(allResults);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -84,7 +115,7 @@ export default function Import() {
     <div>
       <h1 className="text-2xl font-bold mb-6">Import danych</h1>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         {/* CSV Import */}
         <div className="bg-white rounded-lg shadow p-4">
           <h2 className="text-lg font-semibold mb-4">Import CSV z banku</h2>
@@ -97,18 +128,101 @@ export default function Import() {
               <p className="text-xs text-gray-400 mt-1">Konta tworzone automatycznie z pliku</p>
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Plik CSV</label>
-              <input type="file" accept=".csv" onChange={e => setFile(e.target.files?.[0] || null)} className="text-sm" />
+              <label className="block text-xs text-gray-500 mb-1">Pliki CSV</label>
+              <input type="file" accept=".csv" multiple onChange={e => setFiles(e.target.files ? Array.from(e.target.files) : [])} className="text-sm" />
+              {files.length > 1 && <p className="text-xs text-gray-400 mt-1">Zaznaczono: {files.length} plików</p>}
             </div>
-            <button type="submit" disabled={!file || loading} className="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
-              {loading ? 'Importowanie...' : 'Importuj CSV'}
+            <button type="submit" disabled={files.length === 0 || loading} className="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
+              {loading ? 'Importowanie...' : `Importuj CSV${files.length > 1 ? ` (${files.length})` : ''}`}
             </button>
           </form>
-          {result && (
-            <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded text-sm">
-              <p className="font-medium text-green-800">Import zakonczony: {result.filename}</p>
-              <p>Dodano: <strong>{result.imported}</strong> | Pominieto: <strong>{result.skipped}</strong></p>
-              {result.accounts_found > 0 && <p>Kont: <strong>{result.accounts_found}</strong></p>}
+          {results.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {results.length > 1 && (
+                <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+                  Razem: <strong>{results.reduce((s, r) => s + r.imported, 0)}</strong> dodano | <strong>{results.reduce((s, r) => s + r.skipped, 0)}</strong> pominięto ({results.length} plików)
+                </div>
+              )}
+              {results.map((result: any, ri: number) => (
+                <div key={ri} className="p-2 bg-green-50 border border-green-200 rounded text-xs">
+                  <p className="font-medium text-green-800">{result.filename}</p>
+                  <p>Dodano: <strong>{result.imported}</strong> | Pominięto: <strong>{result.skipped}</strong></p>
+                  {result.skippedDetails?.length > 0 && (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-gray-500 hover:text-gray-700">Pominięte ({result.skippedDetails.length})</summary>
+                      <div className="mt-1 max-h-32 overflow-auto">
+                        <table className="w-full">
+                          <tbody>
+                            {result.skippedDetails.map((s: any, i: number) => (
+                              <tr key={i} className="border-t">
+                                <td className="py-0.5 px-1 text-gray-500">{s.date}</td>
+                                <td className="py-0.5 px-1 font-mono text-right">{s.amount?.toFixed(2)}</td>
+                                <td className="py-0.5 px-1 truncate max-w-[150px]">{s.description}</td>
+                                <td className="py-0.5 px-1 text-orange-500">{s.reason}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </details>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* PDF Import */}
+        <div className="bg-white rounded-lg shadow p-4">
+          <h2 className="text-lg font-semibold mb-4">Import PDF (wyciąg bankowy)</h2>
+          <form onSubmit={handlePdfImport} className="space-y-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Bank (opcjonalnie — auto-detekcja)</label>
+              <select value={pdfBank} onChange={e => setPdfBank(e.target.value)} className="border rounded px-3 py-1.5 text-sm w-full">
+                <option value="">Auto-detekcja</option>
+                <option value="alior">Alior Bank</option>
+                <option value="bnpparibas">BNP Paribas</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Pliki PDF</label>
+              <input type="file" accept=".pdf" multiple onChange={e => setPdfFiles(e.target.files ? Array.from(e.target.files) : [])} className="text-sm" />
+              {pdfFiles.length > 1 && <p className="text-xs text-gray-400 mt-1">Zaznaczono: {pdfFiles.length} plików</p>}
+            </div>
+            <button type="submit" disabled={pdfFiles.length === 0 || loading} className="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
+              {loading ? 'Importowanie...' : `Importuj PDF${pdfFiles.length > 1 ? ` (${pdfFiles.length})` : ''}`}
+            </button>
+          </form>
+          {pdfResults.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {pdfResults.length > 1 && (
+                <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+                  Razem: <strong>{pdfResults.reduce((s, r) => s + r.imported, 0)}</strong> dodano | <strong>{pdfResults.reduce((s, r) => s + r.skipped, 0)}</strong> pominięto
+                </div>
+              )}
+              {pdfResults.map((r: any, ri: number) => (
+                <div key={ri} className="p-2 bg-green-50 border border-green-200 rounded text-xs">
+                  <p className="font-medium text-green-800">{r.filename} {r.bank && <span className="text-gray-500">({r.bank})</span>}</p>
+                  <p>Dodano: <strong>{r.imported}</strong> | Pominięto: <strong>{r.skipped}</strong></p>
+                  {r.skippedDetails?.length > 0 && (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-gray-500">Pominięte ({r.skippedDetails.length})</summary>
+                      <div className="mt-1 max-h-32 overflow-auto">
+                        <table className="w-full"><tbody>
+                          {r.skippedDetails.map((s: any, i: number) => (
+                            <tr key={i} className="border-t">
+                              <td className="py-0.5 px-1 text-gray-500">{s.date}</td>
+                              <td className="py-0.5 px-1 font-mono text-right">{s.amount?.toFixed(2)}</td>
+                              <td className="py-0.5 px-1 truncate max-w-[150px]">{s.description}</td>
+                              <td className="py-0.5 px-1 text-orange-500">{s.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody></table>
+                      </div>
+                    </details>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </div>

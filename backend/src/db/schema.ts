@@ -216,6 +216,17 @@ export function initializeDatabase(): void {
   // "Inne przychody" for Przychody group
   db.exec("INSERT OR IGNORE INTO categories (name, color, cat_type, group_name) VALUES ('Inne przychody', '#a7f3d0', 'income', 'Przychody')");
 
+  // Migrate: add account_type, initial_balance to accounts
+  const accCols = db.prepare("PRAGMA table_info(accounts)").all() as { name: string }[];
+  const accColNames = accCols.map(c => c.name);
+  if (!accColNames.includes('account_type')) {
+    db.exec("ALTER TABLE accounts ADD COLUMN account_type TEXT DEFAULT 'bank'");
+  }
+  if (!accColNames.includes('initial_balance')) {
+    db.exec("ALTER TABLE accounts ADD COLUMN initial_balance REAL DEFAULT 0");
+    db.exec("ALTER TABLE accounts ADD COLUMN initial_balance_date TEXT");
+  }
+
   // Migrate: add sort_order to categories
   const catColsSort = db.prepare("PRAGMA table_info(categories)").all() as { name: string }[];
   if (!catColsSort.map(c => c.name).includes('sort_order')) {

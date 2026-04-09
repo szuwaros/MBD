@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { api } from '../api/client';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import CategoryIcon from '../components/CategoryIcon';
+import GroupedCategorySelect from '../components/GroupedCategorySelect';
 import DateRangeSelector from '../components/DateRangeSelector';
 
 const MONTHS = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'];
@@ -15,26 +16,43 @@ const GROUP_COLORS: Record<string, string> = {
 
 export default function Dashboard() {
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
   const [groupData, setGroupData] = useState<any[]>([]);
   const [monthlyData, setMonthlyData] = useState<any[]>([]);
-  const [drillGroup, setDrillGroup] = useState<string | null>(null);
 
-  // Date range for pie chart
+  // Drill state
+  const [drillGroup, setDrillGroup] = useState<string | null>(null);
+  const [drillCategory, setDrillCategory] = useState<{ id: number; name: string } | null>(null);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [txTotal, setTxTotal] = useState(0);
+
   const now = new Date();
   const initFrom = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const initTo = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
   const [from, setFrom] = useState(initFrom);
   const [to, setTo] = useState(initTo);
-  const [trendYear, setTrendYear] = useState(now.getFullYear());
+  const [excludeTransfers, setExcludeTransfers] = useState(true);
 
-  const loadPie = useCallback(() => {
-    api.getReportByGroup({ from, to }).then(setGroupData);
+  const dateParams = useCallback((): Record<string, string> => {
+    const p: Record<string, string> = {};
+    if (from) p.from = from;
+    if (to) p.to = to;
+    if (!excludeTransfers) p.exclude_transfers = '0';
+    return p;
+  }, [from, to, excludeTransfers]);
+
+  const loadData = useCallback(() => {
+    const params = dateParams();
+    api.getReportByGroup(params).then(setGroupData);
     setDrillGroup(null);
-  }, [from, to]);
+    setDrillCategory(null);
+    setTransactions([]);
 
-  const loadTrend = useCallback(() => {
-    api.getMonthlyTrend({ year: String(trendYear) }).then(data => {
+    const trendYear = from ? from.substring(0, 4) : String(now.getFullYear());
+    const trendParams: Record<string, string> = { year: trendYear };
+    if (!excludeTransfers) trendParams.exclude_transfers = '0';
+    api.getMonthlyTrend(trendParams).then(data => {
       const byMonth = new Map(data.map((d: any) => [d.month, d]));
       const full = MONTHS.map((label, i) => {
         const m = String(i + 1).padStart(2, '0');
@@ -43,23 +61,69 @@ export default function Dashboard() {
       });
       setMonthlyData(full);
     });
-  }, [trendYear]);
+  }, [dateParams]);
 
-  useEffect(() => { api.getAccounts().then(setAccounts); }, []);
-  useEffect(() => { loadPie(); }, [loadPie]);
-  useEffect(() => { loadTrend(); }, [loadTrend]);
+  useEffect(() => {
+    api.getAccounts().then(setAccounts);
+    api.getCategories().then(setCategories);
+  }, []);
+  useEffect(() => { loadData(); }, [loadData]);
 
-  const totalBalance = accounts.reduce((sum, a) => sum + (a.current_balance || 0), 0);
+  // Drill-down
+  const getCategoryId = (catName: string): number | null => {
+    const match = categories.find(c => c.name === catName && c.group_name === drillGroup);
+    return match?.id || categories.find(c => c.name === catName)?.id || null;
+  };
+
+  const loadTransactions = useCallback(async (categoryId: number) => {
+    const p: Record<string, string> = { ...dateParams(), category_id: String(categoryId), limit: '200', offset: '0', sort_by: 'date', sort_dir: 'desc' };
+    const res = await api.getTransactions(p);
+    setTransactions(res.data);
+    setTxTotal(res.total);
+  }, [dateParams]);
+
+  const handleDrillGroup = (groupName: string) => {
+    setDrillGroup(groupName);
+    setDrillCategory(null);
+    setTransactions([]);
+  };
+
+  const handleDrillCategory = (catId: number, catName: string) => {
+    setDrillCategory({ id: catId, name: catName });
+    loadTransactions(catId);
+  };
+
+  const handleCategoryChange = async (txId: number, categoryId: string) => {
+    const catId = categoryId ? Number(categoryId) : null;
+    setTransactions(prev => prev.map(t => t.id === txId ? { ...t, category_id: catId } : t));
+    await api.updateTransaction(txId, { category_id: catId });
+    // Refresh pie data
+    api.getReportByGroup(dateParams()).then(setGroupData);
+  };
+
+  const handleBack = () => {
+    if (drillCategory) { setDrillCategory(null); setTransactions([]); }
+    else if (drillGroup) setDrillGroup(null);
+  };
+
   const totalExpenses = groupData.reduce((sum, g) => sum + g.total, 0);
-
   const drilled = drillGroup ? groupData.find(g => g.group === drillGroup) : null;
   const pieData = drilled
     ? drilled.categories.map((c: any) => ({ name: c.category, value: c.total, color: c.color }))
     : groupData.map(g => ({ name: g.group, value: g.total, color: GROUP_COLORS[g.group] || '#6b7280' }));
+  const pieTotal = pieData.reduce((s: number, d: any) => s + d.value, 0);
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
+      <h1 className="text-2xl font-bold mb-4">Dashboard</h1>
+
+      <div className="bg-white rounded-lg shadow p-3 mb-4 flex items-center gap-4 flex-wrap">
+        <DateRangeSelector from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} />
+        <label className="flex items-center gap-1.5 text-xs text-gray-500 ml-auto cursor-pointer select-none">
+          <input type="checkbox" checked={excludeTransfers} onChange={e => setExcludeTransfers(e.target.checked)} className="rounded" />
+          Pomiń przelewy wewnętrzne
+        </label>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-lg shadow p-4">
@@ -67,60 +131,70 @@ export default function Dashboard() {
           <p className="text-2xl font-bold">{accounts.length}</p>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
-          <p className="text-sm text-gray-500">Saldo łączne</p>
-          <p className="text-2xl font-bold">{totalBalance.toFixed(2)} PLN</p>
+          <p className="text-sm text-gray-500">Wydatki (okres)</p>
+          <p className="text-2xl font-bold text-red-600">{totalExpenses.toFixed(2)} PLN</p>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
-          <p className="text-sm text-gray-500">Wydatki (wybrany okres)</p>
-          <p className="text-2xl font-bold text-red-600">{totalExpenses.toFixed(2)} PLN</p>
+          <p className="text-sm text-gray-500">Średnio dziennie</p>
+          <p className="text-2xl font-bold text-red-400">
+            {from && to ? (totalExpenses / Math.max(1, Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000) + 1)).toFixed(2) : '-'} PLN
+          </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        {/* Pie chart with drill-down */}
         <div className="bg-white rounded-lg shadow p-4">
-          <div className="mb-3">
-            <DateRangeSelector from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} />
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-base font-semibold">
+              {drillCategory ? drillCategory.name : drillGroup || 'Wydatki wg grup'}
+            </h2>
+            {(drillGroup || drillCategory) && (
+              <button onClick={handleBack} className="text-xs text-blue-500 hover:text-blue-700">&larr; Wróć</button>
+            )}
           </div>
-          {drillGroup && (
-            <div className="flex items-center gap-2 mb-2">
-              <button onClick={() => setDrillGroup(null)} className="text-xs text-blue-500 hover:text-blue-700">&larr; Wszystkie grupy</button>
-              <span className="text-sm font-medium text-gray-600">{drillGroup}</span>
-            </div>
-          )}
-          {pieData.length === 0 ? (
-            <p className="text-gray-400 text-center py-8">Brak danych</p>
-          ) : (
+
+          {!drillCategory && pieData.length > 0 && (
             <>
-              <ResponsiveContainer width="100%" height={260}>
+              <ResponsiveContainer width="100%" height={240}>
                 <PieChart>
                   <Pie
-                    data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90}
+                    data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={85}
                     isAnimationActive={false}
                     label={({ name, value }) => `${name}: ${value.toFixed(0)}`}
                     onClick={(_: any, idx: number) => {
-                      if (!drillGroup && groupData[idx]) setDrillGroup(groupData[idx].group);
+                      if (!drillGroup) handleDrillGroup(groupData[idx]?.group);
+                      else if (drilled) {
+                        const cat = drilled.categories[idx];
+                        const catId = getCategoryId(cat.category);
+                        if (catId) handleDrillCategory(catId, cat.category);
+                      }
                     }}
-                    style={!drillGroup ? { cursor: 'pointer' } : undefined}
+                    style={{ cursor: 'pointer' }}
                   >
                     {pieData.map((e: any, i: number) => <Cell key={i} fill={e.color} />)}
                   </Pie>
                   <Tooltip formatter={(value: number) => `${value.toFixed(2)} PLN`} />
                 </PieChart>
               </ResponsiveContainer>
-              <div className="mt-1 max-h-40 overflow-y-auto">
+              <div className="max-h-36 overflow-y-auto">
                 <table className="w-full text-xs">
                   <tbody>
                     {pieData.map((d: any, i: number) => (
-                      <tr
-                        key={i}
-                        className={`border-t border-gray-50 ${!drillGroup ? 'cursor-pointer hover:bg-gray-50' : ''}`}
-                        onClick={() => { if (!drillGroup && groupData[i]) setDrillGroup(groupData[i].group); }}
+                      <tr key={i} className="border-t border-gray-50 cursor-pointer hover:bg-gray-50"
+                        onClick={() => {
+                          if (!drillGroup) handleDrillGroup(groupData[i]?.group);
+                          else if (drilled) {
+                            const cat = drilled.categories[i];
+                            const catId = getCategoryId(cat.category);
+                            if (catId) handleDrillCategory(catId, cat.category);
+                          }
+                        }}
                       >
-                        <td className="py-0.5 px-1 w-5">
-                          <CategoryIcon name={d.name} group={!drillGroup} size={14} color={d.color} />
-                        </td>
+                        <td className="py-0.5 px-1 w-5"><CategoryIcon name={d.name} group={!drillGroup} size={14} color={d.color} /></td>
                         <td className="py-0.5 px-1 text-gray-700">{d.name}</td>
                         <td className="py-0.5 px-1 text-right font-mono text-gray-500">{d.value.toFixed(2)}</td>
+                        <td className="py-0.5 px-1 text-right text-gray-300 w-10">{pieTotal > 0 ? `${(d.value / pieTotal * 100).toFixed(0)}%` : ''}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -128,14 +202,50 @@ export default function Dashboard() {
               </div>
             </>
           )}
+
+          {!drillCategory && pieData.length === 0 && (
+            <p className="text-gray-400 text-center py-8">Brak danych</p>
+          )}
+
+          {/* Transaction list */}
+          {drillCategory && (
+            <div className="max-h-[50vh] overflow-auto">
+              <div className="text-xs text-gray-400 mb-1">{txTotal} transakcji</div>
+              {transactions.length === 0 ? (
+                <p className="text-gray-400 text-center py-4 text-sm">Brak transakcji</p>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-white">
+                    <tr className="border-b text-gray-500">
+                      <th className="text-left py-0.5 px-1">Data</th>
+                      <th className="text-left py-0.5 px-1">Kontrahent</th>
+                      <th className="text-right py-0.5 px-1">Kwota</th>
+                      <th className="text-left py-0.5 px-1 w-28">Kategoria</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transactions.map(tx => (
+                      <tr key={tx.id} className="border-t hover:bg-gray-50">
+                        <td className="py-0.5 px-1 text-gray-500 whitespace-nowrap">{tx.date}</td>
+                        <td className="py-0.5 px-1 max-w-[140px] truncate" title={tx.counterparty || tx.description}>{tx.counterparty || tx.description}</td>
+                        <td className="py-0.5 px-1 text-right font-mono whitespace-nowrap">
+                          <span className={tx.amount < 0 ? 'text-red-600' : 'text-green-600'}>{tx.amount.toFixed(2)}</span>
+                        </td>
+                        <td className="py-0.5 px-1">
+                          <GroupedCategorySelect categories={categories} value={tx.category_id || ''} onChange={v => handleCategoryChange(tx.id, v)} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
         </div>
 
+        {/* Monthly trend */}
         <div className="bg-white rounded-lg shadow p-4">
-          <div className="flex items-center justify-between mb-4">
-            <button onClick={() => setTrendYear(y => y - 1)} className="px-2 py-1 rounded hover:bg-gray-100 text-gray-500 text-lg font-bold">&lsaquo;</button>
-            <h2 className="text-lg font-semibold">Trend miesięczny: {trendYear}</h2>
-            <button onClick={() => setTrendYear(y => y + 1)} disabled={trendYear >= now.getFullYear()} className="px-2 py-1 rounded hover:bg-gray-100 text-gray-500 text-lg font-bold disabled:opacity-20">&rsaquo;</button>
-          </div>
+          <h2 className="text-base font-semibold mb-3">Trend miesięczny {from ? String(new Date(from).getFullYear()) : String(now.getFullYear())}</h2>
           {monthlyData.length === 0 ? (
             <p className="text-gray-400 text-center py-8">Brak danych</p>
           ) : (
@@ -153,24 +263,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {accounts.length > 0 && (
-        <div className="bg-white rounded-lg shadow p-4 mt-6">
-          <h2 className="text-lg font-semibold mb-4">Konta</h2>
-          <table className="w-full text-sm">
-            <thead><tr className="border-b"><th className="text-left py-1">Nazwa</th><th className="text-left py-1">Bank</th><th className="text-right py-1">Saldo</th><th className="text-right py-1">Transakcje</th></tr></thead>
-            <tbody>
-              {accounts.map(a => (
-                <tr key={a.id} className="border-b">
-                  <td className="py-1">{a.name}</td>
-                  <td className="py-1">{a.bank}</td>
-                  <td className="py-1 text-right font-mono">{a.current_balance?.toFixed(2) || '-'} PLN</td>
-                  <td className="py-1 text-right">{a.transaction_count}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   );
 }

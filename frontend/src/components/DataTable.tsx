@@ -22,6 +22,7 @@ interface Props<T> {
   deleteLabel?: string;
   defaultSort?: { key: string; dir: 'asc' | 'desc' };
   defaultPageSize?: number;
+  onSelectionChange?: (ids: number[]) => void;
   // Expandable rows
   isExpandable?: (row: T) => boolean;
   renderExpanded?: (row: T) => ReactNode;
@@ -42,6 +43,7 @@ export default function DataTable<T>({
   deleteLabel = 'Usun zaznaczone',
   defaultSort = { key: '', dir: 'desc' as const },
   defaultPageSize = 50,
+  onSelectionChange,
   isExpandable,
   renderExpanded,
   getChildRows,
@@ -68,7 +70,7 @@ export default function DataTable<T>({
   }, [onFetch, page, pageSize, sort]);
 
   useEffect(() => { triggerFetch(); }, [triggerFetch]);
-  useEffect(() => { setSelected(new Set()); }, [data]);
+  useEffect(() => { setSelected(new Set()); onSelectionChange?.([]); }, [data]);
 
   const processedData = isServerSide ? data : (() => {
     let sorted = [...data];
@@ -100,6 +102,7 @@ export default function DataTable<T>({
     setSelected(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
+      onSelectionChange?.([...next]);
       return next;
     });
   };
@@ -107,8 +110,11 @@ export default function DataTable<T>({
   const toggleAll = () => {
     if (selected.size === processedData.length) {
       setSelected(new Set());
+      onSelectionChange?.([]);
     } else {
-      setSelected(new Set(processedData.map(getId)));
+      const all = new Set(processedData.map(getId));
+      setSelected(all);
+      onSelectionChange?.([...all]);
     }
   };
 

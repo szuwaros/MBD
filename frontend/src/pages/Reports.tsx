@@ -18,9 +18,9 @@ export default function Reports() {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [accountId, setAccountId] = useState('');
-  const [year, setYear] = useState(String(new Date().getFullYear()));
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [excludeTransfers, setExcludeTransfers] = useState(true);
 
   const [groupData, setGroupData] = useState<any[]>([]);
   const [monthlyData, setMonthlyData] = useState<any[]>([]);
@@ -42,8 +42,9 @@ export default function Reports() {
     if (accountId) p.account_id = accountId;
     if (from) p.from = from;
     if (to) p.to = to;
+    if (!excludeTransfers) p.exclude_transfers = '0';
     return p;
-  }, [accountId, from, to]);
+  }, [accountId, from, to, excludeTransfers]);
 
   useEffect(() => {
     api.getReportByGroup(dateParams()).then(setGroupData);
@@ -53,9 +54,12 @@ export default function Reports() {
   }, [dateParams]);
 
   useEffect(() => {
-    const params: Record<string, string> = { year };
-    if (accountId) params.account_id = accountId;
-    api.getMonthlyTrend(params).then(data => {
+    const dp = dateParams();
+    const trendYear = dp.from ? dp.from.substring(0, 4) : String(new Date().getFullYear());
+    const trendParams: Record<string, string> = { year: trendYear };
+    if (dp.account_id) trendParams.account_id = dp.account_id;
+    if (!excludeTransfers) trendParams.exclude_transfers = '0';
+    api.getMonthlyTrend(trendParams).then(data => {
       const byMonth = new Map(data.map((d: any) => [d.month, d]));
       const full = MONTHS.map((label, i) => {
         const m = String(i + 1).padStart(2, '0');
@@ -64,7 +68,7 @@ export default function Reports() {
       });
       setMonthlyData(full);
     });
-  }, [accountId, year]);
+  }, [dateParams]);
 
   useEffect(() => {
     api.getBalanceHistory(dateParams()).then(setBalanceData);
@@ -125,18 +129,16 @@ export default function Reports() {
 
       <div className="bg-white rounded-lg shadow p-4 mb-6 flex gap-3 flex-wrap items-center">
         <DateRangeSelector from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} />
-        <div className="ml-auto flex gap-3 items-end">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Konto</label>
-            <select value={accountId} onChange={e => setAccountId(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
-              <option value="">Wszystkie</option>
-              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Rok (trend)</label>
-            <input value={year} onChange={e => setYear(e.target.value)} type="number" className="border rounded px-2 py-1.5 text-sm w-20" />
-          </div>
+        <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
+          <input type="checkbox" checked={excludeTransfers} onChange={e => setExcludeTransfers(e.target.checked)} className="rounded" />
+          Pomiń przelewy wewn.
+        </label>
+        <div className="ml-auto">
+          <label className="block text-xs text-gray-500 mb-1">Konto</label>
+          <select value={accountId} onChange={e => setAccountId(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
+            <option value="">Wszystkie</option>
+            {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
         </div>
       </div>
 
@@ -265,7 +267,7 @@ export default function Reports() {
 
         {/* Monthly trend */}
         <div className="bg-white rounded-lg shadow p-4">
-          <h2 className="text-lg font-semibold mb-4">Trend miesięczny ({year})</h2>
+          <h2 className="text-lg font-semibold mb-4">Trend miesięczny {from ? String(new Date(from).getFullYear()) : String(new Date().getFullYear())}</h2>
           {monthlyData.length === 0 ? (
             <p className="text-gray-400 text-center py-8">Brak danych</p>
           ) : (

@@ -41,6 +41,8 @@ export const api = {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
     return request<{ data: any[]; total: number }>(`/transactions${qs}`);
   },
+  createTransaction: (data: { account_id: number; date: string; description: string; amount: number; counterparty?: string; category_id?: number; note?: string }) =>
+    request<any>('/transactions', { method: 'POST', body: JSON.stringify(data) }),
   getTransaction: (id: number) => request<any>(`/transactions/${id}`),
   updateTransaction: (id: number, data: any) =>
     request<any>(`/transactions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -50,6 +52,8 @@ export const api = {
     request<any>(`/transactions/${id}/split`, { method: 'DELETE' }),
   deleteTransaction: (id: number) =>
     request<any>(`/transactions/${id}`, { method: 'DELETE' }),
+  batchUpdateCategory: (ids: number[], category_id: number | null) =>
+    request<any>('/transactions/batch/category', { method: 'PUT', body: JSON.stringify({ ids, category_id }) }),
   deleteTransactions: (ids: number[]) =>
     request<any>('/transactions/batch', { method: 'DELETE', body: JSON.stringify({ ids }) }),
 
@@ -60,6 +64,12 @@ export const api = {
     fd.append('bank', bank);
     if (accountId) fd.append('account_id', String(accountId));
     return fetch(`${BASE}/import/csv`, { method: 'POST', body: fd }).then(r => r.json());
+  },
+  importPdf: (file: File, bank?: string) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (bank) fd.append('bank', bank);
+    return fetch(`${BASE}/import/pdf`, { method: 'POST', body: fd }).then(r => r.json());
   },
   scanReceipt: (file: File) => {
     const fd = new FormData();

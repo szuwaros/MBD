@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import TransactionSplitModal from '../components/TransactionSplitModal';
 import GroupedCategorySelect from '../components/GroupedCategorySelect';
 import DataTable, { Column } from '../components/DataTable';
+import DateRangeSelector from '../components/DateRangeSelector';
 
 function NoteCell({ txId, note, onSave }: { txId: number; note: string | null; onSave: () => void }) {
   const [editing, setEditing] = useState(false);
@@ -116,6 +117,37 @@ export default function Transactions() {
     await api.updateReceiptItem(receiptId, itemId, { category_id: catId });
   };
 
+  // Selection & bulk actions
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkCategoryId, setBulkCategoryId] = useState('');
+
+  const handleBulkCategory = async () => {
+    if (selectedIds.length === 0 || !bulkCategoryId) return;
+    await api.batchUpdateCategory(selectedIds, Number(bulkCategoryId));
+    setBulkCategoryId('');
+    load();
+  };
+
+  // Manual transaction form
+  const [showAddTx, setShowAddTx] = useState(false);
+  const [newTx, setNewTx] = useState({ account_id: '', date: new Date().toISOString().slice(0, 10), description: '', amount: '', counterparty: '', category_id: '', note: '' });
+
+  const handleCreateTx = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTx.account_id || !newTx.description || !newTx.amount) return;
+    await api.createTransaction({
+      account_id: Number(newTx.account_id),
+      date: newTx.date,
+      description: newTx.description,
+      amount: parseFloat(newTx.amount),
+      counterparty: newTx.counterparty || undefined,
+      category_id: newTx.category_id ? Number(newTx.category_id) : undefined,
+      note: newTx.note || undefined,
+    });
+    setNewTx({ account_id: newTx.account_id, date: newTx.date, description: '', amount: '', counterparty: '', category_id: '', note: '' });
+    load();
+  };
+
   const columns: Column<any>[] = [
     {
       key: '_actions', label: 'Akcje', sortable: false, className: 'px-2 py-1 whitespace-nowrap',
@@ -142,11 +174,25 @@ export default function Transactions() {
     },
     {
       key: 'category_name', label: 'Kategoria',
-      render: tx => tx.is_split
-        ? <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">Rozbita</span>
-        : tx.receipt_items?.length > 0
-          ? <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Paragon</span>
-          : <GroupedCategorySelect categories={categories} value={tx.category_id || ''} onChange={v => handleCategoryChange(tx.id, v)} className="border rounded px-1 py-0.5 text-xs" />,
+      render: tx => {
+        if (tx.is_split || tx.receipt_items?.length > 0) {
+          const items = tx.is_split && tx.items?.length > 0 ? tx.items : tx.receipt_items || [];
+          const total = items.length;
+          const withCat = items.filter((i: any) => i.category_id).length;
+          const allDone = total > 0 && withCat === total;
+          return (
+            <span className="flex items-center gap-1">
+              <span className={`inline-block px-1.5 py-0.5 rounded-full text-[10px] font-medium ${tx.is_split ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'}`}>
+                {tx.is_split ? 'Rozbita' : 'Paragon'}
+              </span>
+              <span className={`text-[10px] ${allDone ? 'text-green-500' : 'text-orange-500'}`} title={`${withCat}/${total} kategorii`}>
+                {allDone ? '✓' : `${withCat}/${total}`}
+              </span>
+            </span>
+          );
+        }
+        return <GroupedCategorySelect categories={categories} value={tx.category_id || ''} onChange={v => handleCategoryChange(tx.id, v)} className="border rounded px-1 py-0.5 text-xs" />;
+      },
     },
     {
       key: 'note', label: 'Notatka', sortable: false, className: 'px-2 py-1',
@@ -214,21 +260,16 @@ export default function Transactions() {
     <div>
       <h1 className="text-2xl font-bold mb-6">Transakcje</h1>
 
-      <div className="bg-white rounded-lg shadow p-4 mb-4 flex gap-3 flex-wrap items-end">
+      <div className="bg-white rounded-lg shadow p-3 mb-2">
+        <DateRangeSelector from={filters.from} to={filters.to} onChange={(f, t) => setFilters(prev => ({ ...prev, from: f, to: t }))} defaultPreset="month" />
+      </div>
+      <div className="bg-white rounded-lg shadow p-3 mb-4 flex gap-3 flex-wrap items-end">
         <div>
           <label className="block text-xs text-gray-500 mb-1">Konto</label>
           <select value={filters.account_id} onChange={e => setFilters(f => ({ ...f, account_id: e.target.value }))} className="border rounded px-2 py-1.5 text-sm">
             <option value="">Wszystkie</option>
-            {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {accounts.map(a => <option key={a.id} value={a.id}>{a.account_type === 'cash' ? '💵 ' : ''}{a.name}</option>)}
           </select>
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Od</label>
-          <input type="date" value={filters.from} onChange={e => setFilters(f => ({ ...f, from: e.target.value }))} className="border rounded px-2 py-1.5 text-sm" />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Do</label>
-          <input type="date" value={filters.to} onChange={e => setFilters(f => ({ ...f, to: e.target.value }))} className="border rounded px-2 py-1.5 text-sm" />
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">Kategoria</label>
@@ -244,9 +285,65 @@ export default function Transactions() {
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">Szukaj</label>
-          <input value={filters.search} onChange={e => setFilters(f => ({ ...f, search: e.target.value }))} className="border rounded px-2 py-1.5 text-sm" placeholder="opis, kontrahent..." />
+          <input value={filters.search} onChange={e => setFilters(f => ({ ...f, search: e.target.value }))} className="border rounded px-2 py-1.5 text-sm" placeholder="opis, kontrahent, notatka..." />
         </div>
+        {Object.values(filters).some(v => v) && (
+          <button onClick={() => setFilters({ account_id: '', from: '', to: '', category_id: '', search: '', amount_min: '', amount_max: '' })} className="text-xs text-red-500 hover:text-red-700 self-end pb-2">Wyczyść filtry</button>
+        )}
       </div>
+
+      <div className="mb-4">
+        <button onClick={() => setShowAddTx(v => !v)} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
+          {showAddTx ? '− Ukryj formularz' : '+ Dodaj transakcję ręcznie'}
+        </button>
+        {showAddTx && (
+          <form onSubmit={handleCreateTx} className="bg-white rounded-lg shadow p-3 mt-2 flex gap-2 flex-wrap items-end">
+            <div>
+              <label className="block text-[10px] text-gray-400 mb-0.5">Konto</label>
+              <select value={newTx.account_id} onChange={e => setNewTx(p => ({ ...p, account_id: e.target.value }))} required className="border rounded px-2 py-1 text-xs">
+                <option value="">Wybierz...</option>
+                {accounts.map(a => <option key={a.id} value={a.id}>{a.account_type === 'cash' ? '💵 ' : ''}{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-400 mb-0.5">Data</label>
+              <input type="date" value={newTx.date} onChange={e => setNewTx(p => ({ ...p, date: e.target.value }))} required className="border rounded px-2 py-1 text-xs" />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-400 mb-0.5">Kwota</label>
+              <input type="number" step="0.01" value={newTx.amount} onChange={e => setNewTx(p => ({ ...p, amount: e.target.value }))} required className="border rounded px-2 py-1 text-xs w-24" placeholder="-49.99" />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-400 mb-0.5">Kontrahent</label>
+              <input value={newTx.counterparty} onChange={e => setNewTx(p => ({ ...p, counterparty: e.target.value }))} className="border rounded px-2 py-1 text-xs" placeholder="np. Sklep" />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-400 mb-0.5">Opis</label>
+              <input value={newTx.description} onChange={e => setNewTx(p => ({ ...p, description: e.target.value }))} required className="border rounded px-2 py-1 text-xs w-40" placeholder="np. Zakupy spożywcze" />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-400 mb-0.5">Kategoria</label>
+              <GroupedCategorySelect categories={categories} value={newTx.category_id} onChange={v => setNewTx(p => ({ ...p, category_id: v }))} className="border rounded px-1 py-1 text-xs" placeholder="opcjonalna" />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-400 mb-0.5">Notatka</label>
+              <input value={newTx.note} onChange={e => setNewTx(p => ({ ...p, note: e.target.value }))} className="border rounded px-2 py-1 text-xs w-32" placeholder="opcjonalna" />
+            </div>
+            <button type="submit" className="bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700">Dodaj</button>
+          </form>
+        )}
+      </div>
+
+      {selectedIds.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 mb-2 flex items-center gap-3 text-xs">
+          <span className="text-blue-700 font-medium">Zaznaczono: {selectedIds.length}</span>
+          <div className="flex items-center gap-1">
+            <span className="text-gray-500">Kategoria:</span>
+            <GroupedCategorySelect categories={categories} value={bulkCategoryId} onChange={setBulkCategoryId} placeholder="Wybierz..." />
+            <button onClick={handleBulkCategory} disabled={!bulkCategoryId} className="px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-30">Zastosuj</button>
+          </div>
+        </div>
+      )}
 
       <DataTable
         data={transactions}
@@ -255,6 +352,7 @@ export default function Transactions() {
         total={total}
         onFetch={load}
         selectable
+        onSelectionChange={setSelectedIds}
         onDelete={handleDelete}
         deleteLabel="Usun zaznaczone"
         defaultSort={{ key: 'date', dir: 'desc' }}

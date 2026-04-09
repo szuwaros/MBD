@@ -169,7 +169,8 @@ export function parseReceiptLines(text: string): OcrReceiptItem[] {
     // Total group: capture liberally (digits, commas, dots, spaces, OCR junk) — cleanPrice handles cleanup
     // TOTAL: first char can be digit or OCR-mangled letter (U instead of 0, etc.)
     const TOTAL = '([\\w][\\d.,\\s/_%]*\\d?)';
-    const TAIL = '[A-Ha-hĆć%/»©®€$()\\[\\]]?\\s*$';
+    // TAIL: any single non-digit char as VAT (OCR mangles A-H into anything)
+    const TAIL = '[^\\d\\s]?\\s*$';
 
     // Sanity-check: if cleaned total is way off from qty*unitPrice, use qty*unitPrice
     // OCR can mangle the total price (e.g. "5,/%" → 5 instead of 5.79)
@@ -183,8 +184,40 @@ export function parseReceiptLines(text: string): OcrReceiptItem[] {
       return rawTotal;
     };
 
+    // Pattern S: Carrefour-style "NAME QTYszt*PRICE= TOTAL VAT"
+    // e.g. "C_WAFEL PRINCE POLO 3szt*2,05= 6,15 C" or "Iszt*41,99= 41,99 Ą"
+    // Also handles `:` instead of `=`, and `Iszt`/`iszt`/`lszt` (OCR for 1szt)
+    let match = line.match(new RegExp(`^(.+?)\\s+(\\d+|[IilLl])\\s*szt\\s*[*xX]+\\s*(\\d+[.,]\\d{2})\\s*[=:]\\s*${TOTAL}\\s*${TAIL}`, 'i'));
+    if (match) {
+      const qtyRaw = match[2];
+      const qty = /^[IilLl]$/.test(qtyRaw) ? 1 : parseInt(qtyRaw);
+      const unitPrice = cleanPrice(match[3]);
+      items.push({
+        name: match[1].trim(),
+        quantity: qty,
+        unitPrice,
+        amount: saneTotal(cleanPrice(match[4]), unitPrice, qty),
+      });
+      continue;
+    }
+
+    // Pattern S2: "NAME Iszt*PRICE= TOTAL" where qty is merged with szt (no space)
+    // e.g. "R.HINIPUSZ.FIFA WOR Iszt*41,99= 41,99 Ą"
+    match = line.match(new RegExp(`^(.+?)\\s+[IilLl1]szt\\s*[*xX]\\s*(\\d+[.,]\\d{2})\\s*[=:]\\s*${TOTAL}\\s*${TAIL}`, 'i'));
+    if (match) {
+      const unitPrice = cleanPrice(match[2]);
+      items.push({
+        name: match[1].trim(),
+        quantity: 1,
+        unitPrice,
+        amount: saneTotal(cleanPrice(match[3]), unitPrice, 1),
+      });
+      continue;
+    }
+
     // Pattern W: NAME  QTY_DECIMAL x PRICE  TOTAL [VAT]  (weight items: "Jabłka 1,752 x4,99 8,74")
-    let match = line.match(new RegExp(`^(.+?)\\s+(\\d+[.,]\\d+)\\s*[xX*«]\\s*(\\d+[.,]\\d{2})\\s+${TOTAL}\\s*${TAIL}`));
+    // Note: redeclare match since Pattern S uses `let match` above
+    match = line.match(new RegExp(`^(.+?)\\s+(\\d+[.,]\\d+)\\s*[xX*«]\\s*(\\d+[.,]\\d{2})[\\s=:]+${TOTAL}\\s*${TAIL}`));
     if (match) {
       const qty = parseAmount(match[2]);
       const unitPrice = cleanPrice(match[3]);
@@ -198,7 +231,7 @@ export function parseReceiptLines(text: string): OcrReceiptItem[] {
     }
 
     // Pattern A: NAME  QTY x PRICE  TOTAL [VAT]
-    match = line.match(new RegExp(`^(.+?)\\s+(\\d+)\\s*[xX*«]\\s*(\\d+[.,]\\d{2})\\s+${TOTAL}\\s*${TAIL}`));
+    match = line.match(new RegExp(`^(.+?)\\s+(\\d+)\\s*[xX*«]\\s*(\\d+[.,]\\d{2})[\\s=:]+${TOTAL}\\s*${TAIL}`));
     if (match) {
       const qty = parseAmount(match[2]);
       const unitPrice = cleanPrice(match[3]);
@@ -214,7 +247,7 @@ export function parseReceiptLines(text: string): OcrReceiptItem[] {
     // Pattern B: NAME  QTY  xPRICE  TOTAL[VAT]  (no space between x and price, OCR may add junk chars)
     // "JOANNA ULTRACOLORNAX 1 x12,49 12,496" or "DOVE A.CARE GO FRMAK 1 xd7,99 12,50"
     // Also handles OCR mangling qty: "t'x4,49" or "| x5,69"
-    match = line.match(new RegExp(`^(.+?)\\s+(\\d+)\\s*[xX*«][^\\d]?(\\d+[.,]\\d{2})\\s+${TOTAL}\\s*${TAIL}`));
+    match = line.match(new RegExp(`^(.+?)\\s+(\\d+)\\s*[xX*«][^\\d]?(\\d+[.,]\\d{2})[\\s=:]+${TOTAL}\\s*${TAIL}`));
     if (match) {
       const qty = parseAmount(match[2]);
       const unitPrice = cleanPrice(match[3]);
@@ -228,7 +261,7 @@ export function parseReceiptLines(text: string): OcrReceiptItem[] {
     }
     // Pattern B2: qty mangled by OCR (non-digit chars before x, e.g. "Z x9,99" "? x10,99")
     // Try to derive qty from total/price
-    match = line.match(new RegExp(`^(.+?)\\s+\\D{0,3}[xX*«]\\s*(\\d+[.,]\\d{2})\\s+${TOTAL}\\s*${TAIL}`));
+    match = line.match(new RegExp(`^(.+?)\\s+\\D{0,3}[xX*«]\\s*(\\d+[.,]\\d{2})[\\s=:]+${TOTAL}\\s*${TAIL}`));
     if (match) {
       const unitPrice = cleanPrice(match[2]);
       const rawTotal = cleanPrice(match[3]);
@@ -246,7 +279,7 @@ export function parseReceiptLines(text: string): OcrReceiptItem[] {
 
     // Pattern C: NAME  QTY  PRICE  TOTAL [VAT]  (no separator between qty and price — OCR lost "x")
     // "BELLANICO C/P5, OAK 1 118,99 18 994" → qty=1, but "118,99" is actually "x18,99"
-    match = line.match(new RegExp(`^(.+?)\\s+(\\d+)\\s+(\\d+[.,]\\d{2})\\s+${TOTAL}\\s*${TAIL}`));
+    match = line.match(new RegExp(`^(.+?)\\s+(\\d+)\\s+(\\d+[.,]\\d{2})[\\s=:]+${TOTAL}\\s*${TAIL}`));
     if (match) {
       const name = match[1].trim();
       let qty = parseAmount(match[2]);

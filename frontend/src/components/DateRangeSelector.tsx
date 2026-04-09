@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-type Preset = 'today' | '7d' | 'week' | '30d' | 'month' | '365d' | 'year' | 'all' | 'custom';
+export type Preset = 'today' | '7d' | 'week' | '30d' | 'month' | '365d' | 'year' | 'all' | 'custom';
 
 const PRESET_LABELS: Record<Preset, string> = {
   today: 'Dziś',
@@ -15,7 +15,10 @@ const PRESET_LABELS: Record<Preset, string> = {
 };
 
 function fmt(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function calcRange(preset: Preset, offset: number): { from: string; to: string; label: string } {
@@ -98,10 +101,11 @@ interface Props {
   from: string;
   to: string;
   onChange: (from: string, to: string) => void;
+  defaultPreset?: Preset;
 }
 
-export default function DateRangeSelector({ from, to, onChange }: Props) {
-  const [preset, setPreset] = useState<Preset>('month');
+export default function DateRangeSelector({ from, to, onChange, defaultPreset = 'month' }: Props) {
+  const [preset, setPreset] = useState<Preset>(defaultPreset);
   const [offset, setOffset] = useState(0);
   const [showCustom, setShowCustom] = useState(false);
 

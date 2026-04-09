@@ -13,7 +13,7 @@ router.get('/', (req, res) => {
   if (from) { where += ' AND t.date >= ?'; params.push(from); }
   if (to) { where += ' AND t.date <= ?'; params.push(to); }
   if (category_id) { where += ' AND (t.category_id = ? OR t.id IN (SELECT transaction_id FROM transaction_items WHERE category_id = ?))'; params.push(category_id, category_id); }
-  if (search) { where += ' AND (t.description LIKE ? OR t.counterparty LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
+  if (search) { where += ' AND (t.description LIKE ? OR t.counterparty LIKE ? OR t.note LIKE ? OR t.type LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
   // Receipt matching: find transactions close to receipt amount and date
   if (amount_match) { where += ' AND ABS(t.amount + ?) < 1.0'; params.push(Number(amount_match)); }
   if (date_match) { where += " AND t.date BETWEEN date(?, '-3 day') AND date(?, '+3 day')"; params.push(date_match, date_match); }
@@ -125,6 +125,27 @@ router.get('/:id', (req, res) => {
   res.json({ ...transaction, items });
 });
 
+// Create manual transaction
+router.post('/', (req, res) => {
+  const { account_id, date, description, amount, counterparty, category_id, note } = req.body;
+  if (!account_id || !date || !description || amount === undefined) {
+    return res.status(400).json({ error: 'Konto, data, opis i kwota są wymagane' });
+  }
+  const hash = `manual_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const result = db.prepare(
+    'INSERT INTO transactions (account_id, date, description, amount, type, counterparty, import_hash, category_id, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(account_id, date, description, amount, 'RĘCZNA', counterparty || null, hash, category_id || null, note || null);
+
+  const transaction = db.prepare(`
+    SELECT t.*, a.name as account_name, c.name as category_name
+    FROM transactions t
+    LEFT JOIN accounts a ON a.id = t.account_id
+    LEFT JOIN categories c ON c.id = t.category_id
+    WHERE t.id = ?
+  `).get(result.lastInsertRowid);
+  res.status(201).json(transaction);
+});
+
 router.put('/:id', (req, res) => {
   const { id } = req.params;
   const { category_id, note } = req.body;
@@ -179,6 +200,19 @@ router.post('/:id/split', (req, res) => {
   const updated = db.prepare('SELECT * FROM transactions WHERE id = ?').get(id) as Record<string, unknown>;
   const updatedItems = db.prepare('SELECT ti.*, c.name as category_name, c.color as category_color FROM transaction_items ti LEFT JOIN categories c ON c.id = ti.category_id WHERE ti.transaction_id = ?').all(id);
   res.json({ ...updated, items: updatedItems });
+});
+
+// Bulk update category
+router.put('/batch/category', (req, res) => {
+  const { ids, category_id } = req.body as { ids: number[]; category_id: number | null };
+  if (!ids || ids.length === 0) return res.status(400).json({ error: 'Brak ID' });
+
+  const update = db.prepare('UPDATE transactions SET category_id = ? WHERE id = ? AND is_split = 0');
+  const updateBatch = db.transaction(() => {
+    for (const id of ids) update.run(category_id, id);
+  });
+  updateBatch();
+  res.json({ updated: ids.length });
 });
 
 router.delete('/batch', (req, res) => {
