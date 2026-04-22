@@ -35,6 +35,8 @@ interface Props<T> {
   onChildSelectionChange?: (children: any[]) => void;
   // Persist table state in sessionStorage under this key
   storageKey?: string;
+  // Double-click handler on row (overrides text expand behavior)
+  onRowDoubleClick?: (row: T) => void;
 }
 
 export default function DataTable<T>({
@@ -57,6 +59,7 @@ export default function DataTable<T>({
   childSelectable = false,
   onChildSelectionChange,
   storageKey,
+  onRowDoubleClick,
 }: Props<T>) {
   const loadStored = () => {
     if (!storageKey) return null;
@@ -124,7 +127,7 @@ export default function DataTable<T>({
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const handleSort = (key: string) => {
-    setSort(prev => ({ key, dir: prev.key === key && prev.dir === 'desc' ? 'asc' : 'desc' }));
+    setSort((prev: { key: string; dir: string }) => ({ key, dir: prev.key === key && prev.dir === 'desc' ? 'asc' as const : 'desc' as const }));
     setPage(0);
   };
 
@@ -269,7 +272,7 @@ export default function DataTable<T>({
               const label = isExpanded && childLabel ? childLabel(row) : undefined;
               return (
                 <>
-                <tr key={id} className={`border-t hover:bg-gray-50 ${selected.has(id) ? 'bg-blue-50' : ''}`} onDoubleClick={() => toggleTextExpand(id)}>
+                <tr key={id} className={`border-t hover:bg-gray-50 ${selected.has(id) ? 'bg-blue-50' : ''} ${onRowDoubleClick ? 'cursor-pointer' : ''}`} onDoubleClick={() => onRowDoubleClick ? onRowDoubleClick(row) : toggleTextExpand(id)}>
                   {hasExpand && (
                     <td className="px-1 py-1 text-center">
                       {canExpand && (
@@ -387,9 +390,9 @@ export default function DataTable<T>({
             </div>
           </div>
           <div className="space-x-2">
-            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="px-3 py-1 border rounded disabled:opacity-30">Wstecz</button>
+            <button onClick={() => setPage((p: number) => Math.max(0, p - 1))} disabled={page === 0} className="px-3 py-1 border rounded disabled:opacity-30">Wstecz</button>
             <span className="text-gray-500">Strona {page + 1} z {totalPages}</span>
-            <button onClick={() => setPage(p => p + 1)} disabled={(page + 1) * pageSize >= total} className="px-3 py-1 border rounded disabled:opacity-30">Dalej</button>
+            <button onClick={() => setPage((p: number) => p + 1)} disabled={(page + 1) * pageSize >= total} className="px-3 py-1 border rounded disabled:opacity-30">Dalej</button>
           </div>
         </div>
       </div>

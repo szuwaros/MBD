@@ -1,8 +1,23 @@
 import { Router } from 'express';
 import db from '../db/connection';
 import { reparseRawText } from '../parsers/receipt-ocr';
+import { PROFILES, defaultProfile, detectProfile } from '../parsers/receipt-profiles';
 
 const router = Router();
+
+// List all receipt profiles
+router.get('/profiles', (_req, res) => {
+  const profiles = [...PROFILES, defaultProfile].map(p => ({
+    name: p.name,
+    stores: p.storePatterns.map(r => r.source),
+    vatSuffix: p.vatSuffix,
+    discountMode: p.discountMode,
+    namePrefix: p.namePrefix?.source || null,
+    preferredPatterns: p.preferredPatterns,
+    desc: p.desc,
+  }));
+  res.json(profiles);
+});
 
 router.get('/', (_req, res) => {
   const receipts = db.prepare(`
@@ -35,7 +50,9 @@ router.get('/:id', (req, res) => {
     ORDER BY ri.id
   `).all(id);
 
-  res.json({ ...(receipt as object), items });
+  // Detect which profile was/would be used
+  const profile = (receipt as any).raw_data ? detectProfile((receipt as any).raw_data) : defaultProfile;
+  res.json({ ...(receipt as object), items, profileUsed: profile.name });
 });
 
 // Update receipt metadata

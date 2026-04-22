@@ -1,22 +1,27 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 
 const BANK_FORMATS = [
   { id: 'pekao', label: 'PeKaO SA' },
-  { id: 'pkobp', label: 'PKO BP' },
   { id: 'creditagricole', label: 'Credit Agricole' },
 ];
 
 const TYPE_BADGES: Record<string, { bg: string; text: string; label: string }> = {
   csv: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'CSV' },
+  xml: { bg: 'bg-green-100', text: 'text-green-700', label: 'XML' },
   pdf: { bg: 'bg-indigo-100', text: 'text-indigo-700', label: 'PDF' },
   receipt: { bg: 'bg-purple-100', text: 'text-purple-700', label: 'E-paragon' },
   'receipt-scan': { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Skan paragonu' },
 };
 
 export default function Import() {
+  const [accounts, setAccounts] = useState<any[]>([]);
   const [bank, setBank] = useState('pekao');
+  const [csvAccountId, setCsvAccountId] = useState('');
   const [files, setFiles] = useState<File[]>([]);
+  const [xmlFiles, setXmlFiles] = useState<File[]>([]);
+  const [xmlAccountId, setXmlAccountId] = useState('');
+  const [xmlResults, setXmlResults] = useState<any[]>([]);
   const [pdfFiles, setPdfFiles] = useState<File[]>([]);
   const [pdfBank, setPdfBank] = useState('');
   const [pdfResults, setPdfResults] = useState<any[]>([]);
@@ -28,9 +33,12 @@ export default function Import() {
   const [error, setError] = useState('');
   const [imports, setImports] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const isMobile = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api.getImports().then(setImports);
+    api.getAccounts().then(setAccounts);
   }, []);
 
   const handleCsvImport = async (e: React.FormEvent) => {
@@ -40,7 +48,7 @@ export default function Import() {
     const allResults: any[] = [];
     try {
       for (const f of files) {
-        const res = await api.importCsv(f, bank);
+        const res = await api.importCsv(f, bank, csvAccountId ? Number(csvAccountId) : undefined);
         if (res.error) throw new Error(`${f.name}: ${res.error}`);
         allResults.push(res);
       }
@@ -49,6 +57,28 @@ export default function Import() {
       api.getImports().then(setImports);
     } catch (err: any) {
       setResults(allResults);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleXmlImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (xmlFiles.length === 0) return;
+    setError(''); setXmlResults([]); setLoading(true);
+    const allResults: any[] = [];
+    try {
+      for (const f of xmlFiles) {
+        const res = await api.importXml(f, xmlAccountId ? Number(xmlAccountId) : undefined);
+        if (res.error) throw new Error(`${f.name}: ${res.error}`);
+        allResults.push(res);
+      }
+      setXmlResults(allResults);
+      setXmlFiles([]);
+      api.getImports().then(setImports);
+    } catch (err: any) {
+      setXmlResults(allResults);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -125,7 +155,14 @@ export default function Import() {
               <select value={bank} onChange={e => setBank(e.target.value)} className="border rounded px-3 py-1.5 text-sm w-full">
                 {BANK_FORMATS.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
               </select>
-              <p className="text-xs text-gray-400 mt-1">Konta tworzone automatycznie z pliku</p>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Konto docelowe</label>
+              <select value={csvAccountId} onChange={e => setCsvAccountId(e.target.value)} className="border rounded px-3 py-1.5 text-sm w-full">
+                <option value="">Auto z pliku (numer rachunku)</option>
+                {accounts.map(a => <option key={a.id} value={a.id}>{a.account_type === 'cash' ? '💵 ' : ''}{a.name}</option>)}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">Dla plików bez numeru rachunku (np. PKO BP) wybierz konto ręcznie</p>
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Pliki CSV</label>
@@ -163,6 +200,54 @@ export default function Import() {
                             ))}
                           </tbody>
                         </table>
+                      </div>
+                    </details>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* PKO BP XML Import */}
+        <div className="bg-white rounded-lg shadow p-4">
+          <h2 className="text-lg font-semibold mb-4">Import XML — PKO BP</h2>
+          <form onSubmit={handleXmlImport} className="space-y-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Konto docelowe (opcjonalnie)</label>
+              <select value={xmlAccountId} onChange={e => setXmlAccountId(e.target.value)} className="border rounded px-3 py-1.5 text-sm w-full">
+                <option value="">Auto z pliku (numer rachunku)</option>
+                {accounts.map(a => <option key={a.id} value={a.id}>{a.account_type === 'cash' ? '💵 ' : ''}{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Pliki XML (Zestawienie operacji z iPKO)</label>
+              <input type="file" accept=".xml" multiple onChange={e => setXmlFiles(e.target.files ? Array.from(e.target.files) : [])} className="text-sm" />
+            </div>
+            <button type="submit" disabled={xmlFiles.length === 0 || loading} className="bg-green-600 text-white px-4 py-1.5 rounded text-sm hover:bg-green-700 disabled:opacity-50">
+              {loading ? 'Importowanie...' : `Importuj XML${xmlFiles.length > 1 ? ` (${xmlFiles.length})` : ''}`}
+            </button>
+          </form>
+          {xmlResults.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {xmlResults.map((result: any, ri: number) => (
+                <div key={ri} className="p-2 bg-green-50 border border-green-200 rounded text-xs">
+                  <p className="font-medium text-green-800">{result.filename} {result.accountNumber && <span className="text-gray-500">(konto: {result.accountNumber})</span>}</p>
+                  <p>Dodano: <strong>{result.imported}</strong> | Pominięto: <strong>{result.skipped}</strong></p>
+                  {result.skippedDetails?.length > 0 && (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-gray-500 hover:text-gray-700">Pominięte ({result.skippedDetails.length})</summary>
+                      <div className="mt-1 max-h-32 overflow-auto">
+                        <table className="w-full"><tbody>
+                          {result.skippedDetails.map((s: any, i: number) => (
+                            <tr key={i} className="border-t">
+                              <td className="py-0.5 px-1 text-gray-500">{s.date}</td>
+                              <td className="py-0.5 px-1 font-mono text-right">{s.amount?.toFixed(2)}</td>
+                              <td className="py-0.5 px-1 truncate max-w-[150px]">{s.description}</td>
+                              <td className="py-0.5 px-1 text-orange-500">{s.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody></table>
                       </div>
                     </details>
                   )}
@@ -234,6 +319,29 @@ export default function Import() {
             <div>
               <label className="block text-xs text-gray-500 mb-1">Zdjecie paragonu (JPG, PNG)</label>
               <input type="file" accept="image/jpeg,image/png,image/webp" onChange={e => setScanFile(e.target.files?.[0] || null)} className="text-sm" />
+              {isMobile && (
+                <>
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={e => setScanFile(e.target.files?.[0] || null)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="mt-2 flex items-center gap-2 bg-gray-100 border border-gray-300 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-200"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                      <circle cx="12" cy="13" r="4"/>
+                    </svg>
+                    Zrob zdjecie
+                  </button>
+                </>
+              )}
               <p className="text-xs text-gray-400 mt-1">OCR + automatyczna kategoryzacja produktow</p>
             </div>
             <button type="submit" disabled={!scanFile || loading} className="bg-amber-600 text-white px-4 py-1.5 rounded text-sm hover:bg-amber-700 disabled:opacity-50">

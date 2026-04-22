@@ -14,9 +14,11 @@ export default function Receipts() {
   const [editItem, setEditItem] = useState<any>({});
   const [newItem, setNewItem] = useState<{ name: string; amount: string } | null>(null);
   const [reparsing, setReparsing] = useState(false);
+  const [profiles, setProfiles] = useState<any[]>([]);
+  const [showProfiles, setShowProfiles] = useState(false);
 
   const load = () => api.getReceipts().then(setReceipts);
-  useEffect(() => { load(); api.getCategories().then(setCategories); }, []);
+  useEffect(() => { load(); api.getCategories().then(setCategories); api.getReceiptProfiles().then(setProfiles); }, []);
 
   const openDetails = async (id: number) => {
     const data = await api.getReceipt(id);
@@ -137,13 +139,67 @@ export default function Receipts() {
         : <span className="text-orange-500 text-xs">Niepowiązano</span>,
     },
     { key: 'source_filename', label: 'Plik', className: 'px-2 py-0.5 text-xs text-gray-400 font-mono', render: r => r.source_filename },
+    { key: 'created_at', label: 'Import', className: 'px-2 py-0.5 text-xs text-gray-400', render: r => r.created_at ? r.created_at.substring(0, 10) : '-' },
   ];
 
   const itemsSum = selected?.items?.reduce((s: number, i: any) => s + i.amount, 0) || 0;
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Paragony</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold">Paragony</h1>
+        <button onClick={() => setShowProfiles(!showProfiles)} className="text-xs text-blue-500 hover:text-blue-700">
+          {showProfiles ? 'Ukryj profile' : 'Profile paragonów'}
+        </button>
+      </div>
+
+      {showProfiles && (
+        <div className="bg-white rounded-lg shadow p-4 mb-4">
+          <h2 className="text-sm font-semibold mb-2">Profile parsowania paragonów</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b text-gray-500">
+                  <th className="text-left py-1 px-2">Profil</th>
+                  <th className="text-left py-1 px-2">Format daty</th>
+                  <th className="text-left py-1 px-2">Początek produktów</th>
+                  <th className="text-left py-1 px-2">Koniec produktów</th>
+                  <th className="text-left py-1 px-2">Prefiks nazwy</th>
+                  <th className="text-left py-1 px-2">Sufiks VAT (cena)</th>
+                  <th className="text-left py-1 px-2">Format sztuk</th>
+                  <th className="text-left py-1 px-2">Upusty</th>
+                  <th className="text-left py-1 px-2">Nagłówek</th>
+                  <th className="text-left py-1 px-2">Format sumy</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profiles.map(p => (
+                  <tr key={p.name} className="border-t hover:bg-gray-50">
+                    <td className="py-1 px-2 font-medium whitespace-nowrap">{p.name}</td>
+                    <td className="py-1 px-2 text-gray-500">{p.desc?.dateFormat || '-'}</td>
+                    <td className="py-1 px-2 font-mono text-gray-400 text-[10px]">{p.desc?.productStartText || '-'}</td>
+                    <td className="py-1 px-2 font-mono text-gray-400 text-[10px]">{p.desc?.productEndText || '-'}</td>
+                    <td className="py-1 px-2 font-mono text-gray-400 text-[10px]">{p.desc?.namePrefixText || '-'}</td>
+                    <td className="py-1 px-2">
+                      <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] ${p.vatSuffix === 'spaced' ? 'bg-blue-50 text-blue-600' : p.vatSuffix === 'merged' ? 'bg-amber-50 text-amber-600' : 'bg-gray-50 text-gray-500'}`}>
+                        {p.desc?.vatSuffixText || (p.vatSuffix === 'spaced' ? '14,99 A' : p.vatSuffix === 'merged' ? '14,99A' : 'brak')}
+                      </span>
+                    </td>
+                    <td className="py-1 px-2 font-mono text-gray-400 text-[10px]">{p.desc?.qtyFormat || '-'}</td>
+                    <td className="py-1 px-2">
+                      <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] ${p.discountMode === 'apply' ? 'bg-green-50 text-green-600' : 'bg-gray-50 text-gray-500'}`}>
+                        {p.discountMode === 'apply' ? 'pomniejsza cenę' : 'pomijany'}
+                      </span>
+                    </td>
+                    <td className="py-1 px-2 text-gray-400 text-[10px]">{p.desc?.headerFormat || '-'}</td>
+                    <td className="py-1 px-2 font-mono text-gray-400 text-[10px]">{p.desc?.totalFormat || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <DataTable
         data={receipts}
@@ -191,6 +247,11 @@ export default function Receipts() {
                     />
                   </div>
                   <span className="text-xs text-gray-400 self-end">{selected.source_filename}</span>
+                  {selected.profileUsed && (
+                    <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded self-end" title="Profil parsowania">
+                      Profil: {selected.profileUsed}
+                    </span>
+                  )}
                 </div>
                 <button
                   onClick={handleReparse}

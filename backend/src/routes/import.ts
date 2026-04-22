@@ -6,6 +6,7 @@ import { getParser } from '../parsers';
 import { parseReceiptJson, ParsedReceipt } from '../parsers/receipt';
 import { parseReceiptImage } from '../parsers/receipt-ocr';
 import { detectPdfBank, parseAliorPdf, parseBnpParibasPdf } from '../parsers/pdf-bank';
+import { parsePkoBpXml } from '../parsers/pkobp-xml';
 import iconv from 'iconv-lite';
 
 const router = Router();
@@ -14,6 +15,15 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 function generateHash(accountNumber: string, date: string, amount: number, description: string): string {
   const normalized = `${accountNumber}|${date}|${amount.toFixed(2)}|${description.trim().toLowerCase()}`;
   return crypto.createHash('sha256').update(normalized).digest('hex');
+}
+
+// Dedup check: same account + date + amount = same transaction regardless of description
+const checkDuplicate = db.prepare(
+  'SELECT id FROM transactions WHERE account_id = ? AND date = ? AND amount = ? LIMIT 1'
+);
+
+function isDuplicate(accountId: number, date: string, amount: number): boolean {
+  return !!checkDuplicate.get(accountId, date, amount);
 }
 
 function decodeBuffer(buffer: Buffer): string {
@@ -35,11 +45,15 @@ router.post('/csv', upload.single('file'), (req, res) => {
   const bankId = req.body.bank;
   if (!bankId) return res.status(400).json({ error: 'Format banku jest wymagany' });
 
+  const manualAccountId = req.body.account_id ? Number(req.body.account_id) : null;
+
   const parser = getParser(bankId);
   if (!parser) return res.status(400).json({ error: `Brak parsera dla banku: ${bankId}` });
 
   const content = decodeBuffer(req.file.buffer);
+  console.log(`[CSV Import] bank=${bankId}, file=${req.file.originalname}, size=${req.file.size}, contentLen=${content.length}, first100=${JSON.stringify(content.substring(0, 100))}`);
   const parsed = parser.parse(content);
+  console.log(`[CSV Import] parsed ${parsed.length} transactions`);
 
   if (parsed.length === 0) {
     return res.status(400).json({ error: 'Nie znaleziono transakcji w pliku. Sprawdz format CSV.' });
@@ -83,7 +97,7 @@ router.post('/csv', upload.single('file'), (req, res) => {
       // Expense (amount < 0): source_account is the user's account
       // Income (amount >= 0): dest_account is the user's account
       const userAccountNumber = tx.amount < 0 ? tx.sourceAccount : tx.destAccount;
-      const accountId = resolveAccountId(userAccountNumber);
+      const accountId = resolveAccountId(userAccountNumber) || manualAccountId;
 
       if (!accountId) {
         skipped++;
@@ -93,7 +107,15 @@ router.post('/csv', upload.single('file'), (req, res) => {
 
       if (userAccountNumber) accountsCreated.add(userAccountNumber);
 
-      const hash = generateHash(userAccountNumber || '', tx.date, tx.amount, tx.description);
+      // Cross-bank dedup: same account + date + amount
+      if (isDuplicate(accountId, tx.date, tx.amount)) {
+        skipped++;
+        skippedDetails.push({ date: tx.date, amount: tx.amount, description: tx.description, reason: 'duplikat (konto+data+kwota)' });
+        continue;
+      }
+
+      const hashAccountKey = userAccountNumber || String(accountId);
+      const hash = generateHash(hashAccountKey, tx.date, tx.amount, tx.description);
       const categoryId = resolveCategoryId(tx.category);
       const result = insertTx.run(
         accountId, tx.date, tx.description, tx.amount, tx.balanceAfter ?? null,
@@ -105,7 +127,7 @@ router.post('/csv', upload.single('file'), (req, res) => {
         imported++;
       } else {
         skipped++;
-        skippedDetails.push({ date: tx.date, amount: tx.amount, description: tx.description, reason: 'duplikat' });
+        skippedDetails.push({ date: tx.date, amount: tx.amount, description: tx.description, reason: 'duplikat (hash)' });
       }
     }
 
@@ -122,6 +144,89 @@ router.post('/csv', upload.single('file'), (req, res) => {
     total: parsed.length,
     filename: req.file.originalname,
     accounts_found: accountsCreated.size,
+  });
+});
+
+// PKO BP XML import
+router.post('/xml', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Plik jest wymagany' });
+
+  const content = req.file.buffer.toString('utf-8');
+  const { accountNumber, transactions } = parsePkoBpXml(content);
+
+  if (transactions.length === 0) {
+    return res.status(400).json({ error: 'Nie znaleziono transakcji w pliku XML.' });
+  }
+
+  const manualAccountId = req.body.account_id ? Number(req.body.account_id) : null;
+
+  let imported = 0;
+  let skipped = 0;
+  const skippedDetails: { date: string; amount: number; description: string; reason: string }[] = [];
+
+  const findAccountByNumber = db.prepare('SELECT id FROM accounts WHERE account_number = ?');
+  const insertAccountStmt = db.prepare('INSERT INTO accounts (name, bank, account_number) VALUES (?, ?, ?)');
+
+  function resolveAccountId(acctNumber: string | undefined): number | null {
+    if (!acctNumber) return null;
+    const existing = findAccountByNumber.get(acctNumber) as { id: number } | undefined;
+    if (existing) return existing.id;
+    const result = insertAccountStmt.run(acctNumber, 'pkobp', acctNumber);
+    return Number(result.lastInsertRowid);
+  }
+
+  const insertTx = db.prepare(`
+    INSERT OR IGNORE INTO transactions (account_id, date, description, amount, balance_after, type, counterparty, source_account, dest_account, import_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const importTransactions = db.transaction(() => {
+    for (const tx of transactions) {
+      const userAccountNumber = tx.amount < 0 ? tx.sourceAccount : tx.destAccount;
+      const accountId = resolveAccountId(userAccountNumber) || manualAccountId;
+
+      if (!accountId) {
+        skipped++;
+        skippedDetails.push({ date: tx.date, amount: tx.amount, description: tx.description, reason: 'brak konta' });
+        continue;
+      }
+
+      // Cross-bank dedup: same account + date + amount
+      if (isDuplicate(accountId, tx.date, tx.amount)) {
+        skipped++;
+        skippedDetails.push({ date: tx.date, amount: tx.amount, description: tx.description, reason: 'duplikat (konto+data+kwota)' });
+        continue;
+      }
+
+      const hashKey = userAccountNumber || String(accountId);
+      const hash = generateHash(hashKey, tx.date, tx.amount, tx.description);
+      const result = insertTx.run(
+        accountId, tx.date, tx.description, tx.amount, tx.balanceAfter ?? null,
+        tx.type ?? null, tx.counterparty ?? null,
+        tx.sourceAccount ?? null, tx.destAccount ?? null,
+        hash
+      );
+      if (result.changes > 0) {
+        imported++;
+      } else {
+        skipped++;
+        skippedDetails.push({ date: tx.date, amount: tx.amount, description: tx.description, reason: 'duplikat' });
+      }
+    }
+
+    db.prepare('INSERT INTO imports (type, filename, rows_imported, rows_skipped) VALUES (?, ?, ?, ?)')
+      .run('xml', req.file!.originalname, imported, skipped);
+  });
+
+  importTransactions();
+
+  res.json({
+    imported,
+    skipped,
+    skippedDetails: skippedDetails.length > 0 ? skippedDetails : undefined,
+    total: transactions.length,
+    filename: req.file.originalname,
+    accountNumber,
   });
 });
 

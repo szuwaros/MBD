@@ -1,14 +1,19 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { api } from '../api/client';
 
-export default function NoteCell({ txId, note, onSave }: { txId: number; note: string | null; onSave: () => void }) {
+export default function NoteCell({ txId, note, onSave }: { txId: number; note: string | null; onSave: (txId: number, note: string | null) => void }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(note || '');
+  const saving = useRef(false);
 
   const save = async () => {
-    await api.updateTransaction(txId, { note: value || null });
+    if (saving.current) return;
+    saving.current = true;
+    const newNote = value || null;
     setEditing(false);
-    onSave();
+    onSave(txId, newNote);
+    await api.updateTransaction(txId, { note: newNote });
+    saving.current = false;
   };
 
   if (editing) {

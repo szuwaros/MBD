@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { PieChart, Pie, Cell, BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 import CategoryIcon from '../components/CategoryIcon';
@@ -18,6 +19,7 @@ const GROUP_COLORS: Record<string, string> = {
 };
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [accounts, setAccounts] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [groupData, setGroupData] = useState<any[]>([]);
@@ -27,7 +29,7 @@ export default function Dashboard() {
 
   // Drill state
   const [drillGroup, setDrillGroup] = useState<string | null>(null);
-  const [drillCategory, setDrillCategory] = useState<{ id: number; name: string } | null>(null);
+  const [drillCategory, setDrillCategory] = useState<{ id: number | 'none'; name: string } | null>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [txTotal, setTxTotal] = useState(0);
 
@@ -120,7 +122,7 @@ export default function Dashboard() {
     return match?.id || categories.find(c => c.name === catName)?.id || null;
   };
 
-  const loadTransactions = useCallback(async (categoryId: number) => {
+  const loadTransactions = useCallback(async (categoryId: number | 'none') => {
     const p: Record<string, string> = { ...dateParams(), category_id: String(categoryId), limit: '200', offset: '0', sort_by: 'date', sort_dir: 'desc' };
     const res = await api.getTransactions(p);
     setTransactions(res.data);
@@ -133,7 +135,7 @@ export default function Dashboard() {
     setTransactions([]);
   };
 
-  const handleDrillCategory = (catId: number, catName: string) => {
+  const handleDrillCategory = (catId: number | 'none', catName: string) => {
     setDrillCategory({ id: catId, name: catName });
     loadTransactions(catId);
   };
@@ -218,7 +220,7 @@ export default function Dashboard() {
                       else if (drilled) {
                         const cat = drilled.categories[idx];
                         const catId = getCategoryId(cat.category);
-                        if (catId) handleDrillCategory(catId, cat.category);
+                        handleDrillCategory(catId ?? 'none', cat.category);
                       }
                     }}
                     style={{ cursor: 'pointer' }}
@@ -238,7 +240,7 @@ export default function Dashboard() {
                           else if (drilled) {
                             const cat = drilled.categories[i];
                             const catId = getCategoryId(cat.category);
-                            if (catId) handleDrillCategory(catId, cat.category);
+                            handleDrillCategory(catId ?? 'none', cat.category);
                           }
                         }}
                       >
@@ -267,7 +269,22 @@ export default function Dashboard() {
           {/* Transaction list */}
           {drillCategory && (
             <div className="max-h-[50vh] overflow-auto">
-              <div className="text-xs text-gray-400 mb-1">{txTotal} transakcji</div>
+              <div className="text-xs text-gray-400 mb-1 flex items-center justify-between">
+                <span>{txTotal} transakcji</span>
+                <button
+                  onClick={() => {
+                    const catId = drillCategory?.id;
+                    sessionStorage.setItem('tx:filters', JSON.stringify({
+                      account_id: accountId, from, to, category_id: String(catId ?? ''), search: '', amount_min: '', amount_max: '',
+                    }));
+                    sessionStorage.removeItem('dt:transactions');
+                    navigate('/transactions');
+                  }}
+                  className="text-blue-500 hover:text-blue-700"
+                >
+                  Pokaż w Transakcjach &rarr;
+                </button>
+              </div>
               {transactions.length === 0 ? (
                 <p className="text-gray-400 text-center py-4 text-sm">Brak transakcji</p>
               ) : (
@@ -292,7 +309,7 @@ export default function Dashboard() {
                         <td className="py-0.5 px-1">
                           <GroupedCategorySelect categories={categories} value={tx.category_id || ''} onChange={v => handleCategoryChange(tx.id, v)} amount={tx.amount} />
                         </td>
-                        <td className="py-0.5 px-1"><NoteCell txId={tx.id} note={tx.note} onSave={() => drillCategory && loadTransactions(drillCategory.id)} /></td>
+                        <td className="py-0.5 px-1"><NoteCell txId={tx.id} note={tx.note} onSave={(id, newNote) => setTransactions(prev => prev.map(t => t.id === id ? { ...t, note: newNote } : t))} /></td>
                       </tr>
                     ))}
                   </tbody>

@@ -65,6 +65,12 @@ export const api = {
     if (accountId) fd.append('account_id', String(accountId));
     return fetch(`${BASE}/import/csv`, { method: 'POST', body: fd }).then(r => r.json());
   },
+  importXml: (file: File, accountId?: number) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (accountId) fd.append('account_id', String(accountId));
+    return fetch(`${BASE}/import/xml`, { method: 'POST', body: fd }).then(r => r.json());
+  },
   importPdf: (file: File, bank?: string) => {
     const fd = new FormData();
     fd.append('file', file);
@@ -85,6 +91,7 @@ export const api = {
 
   // Receipts
   getReceipts: () => request<any[]>('/receipts'),
+  getReceiptProfiles: () => request<any[]>('/receipts/profiles'),
   getReceipt: (id: number) => request<any>(`/receipts/${id}`),
   updateReceipt: (id: number, data: { store_name?: string; receipt_date?: string; total_amount?: number }) =>
     request<any>(`/receipts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

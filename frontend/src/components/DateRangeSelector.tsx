@@ -107,7 +107,7 @@ interface Props {
 export default function DateRangeSelector({ from, to, onChange, defaultPreset = 'month' }: Props) {
   const [preset, setPreset] = useState<Preset>(defaultPreset);
   const [offset, setOffset] = useState(0);
-  const [showCustom, setShowCustom] = useState(false);
+  const [showCustom, setShowCustom] = useState(defaultPreset === 'custom');
 
   useEffect(() => {
     if (preset === 'custom') return;

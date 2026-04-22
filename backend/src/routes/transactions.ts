@@ -12,7 +12,8 @@ router.get('/', (req, res) => {
   if (account_id) { where += ' AND t.account_id = ?'; params.push(account_id); }
   if (from) { where += ' AND t.date >= ?'; params.push(from); }
   if (to) { where += ' AND t.date <= ?'; params.push(to); }
-  if (category_id) { where += ' AND (t.category_id = ? OR t.id IN (SELECT transaction_id FROM transaction_items WHERE category_id = ?))'; params.push(category_id, category_id); }
+  if (category_id === 'none') { where += ' AND t.category_id IS NULL AND t.is_split = 0'; }
+  else if (category_id) { where += ' AND (t.category_id = ? OR t.id IN (SELECT transaction_id FROM transaction_items WHERE category_id = ?))'; params.push(category_id, category_id); }
   if (search) { where += ' AND (t.description LIKE ? OR t.counterparty LIKE ? OR t.note LIKE ? OR t.type LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
   // Receipt matching: find transactions close to receipt amount and date
   if (amount_match) { where += ' AND ABS(t.amount + ?) < 1.0'; params.push(Number(amount_match)); }

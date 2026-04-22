@@ -143,7 +143,6 @@ router.get('/monthly-trend', (req, res) => {
 router.get('/balance-history', (req, res) => {
   const { account_id, from, to } = req.query;
 
-  // Get accounts with initial balance
   let accounts: any[];
   if (account_id) {
     accounts = db.prepare('SELECT * FROM accounts WHERE id = ?').all(account_id) as any[];
@@ -156,30 +155,40 @@ router.get('/balance-history', (req, res) => {
   }
 
   const result: { date: string; balance: number; account_name: string }[] = [];
+  const displayFrom = (from as string) || '2000-01-01';
+  const displayTo = (to as string) || new Date().toISOString().slice(0, 10);
 
   for (const account of accounts) {
-    const startDate = from || account.initial_balance_date || '2000-01-01';
-    const endDate = to || new Date().toISOString().slice(0, 10);
     const initialBalance = account.initial_balance || 0;
     const balanceDate = account.initial_balance_date || '2000-01-01';
 
-    // Sum of transactions before start date (after initial_balance_date)
-    const priorSum = db.prepare(
-      'SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE account_id = ? AND date >= ? AND date < ?'
-    ).get(account.id, balanceDate, startDate) as { total: number };
-
-    // Daily transaction sums within range
-    const dailyTx = db.prepare(`
-      SELECT date, SUM(amount) as daily_total
+    // Get ALL transactions from initial_balance_date onwards (not filtered by display range)
+    // so that the running balance is always correct
+    const allTx = db.prepare(`
+      SELECT date, amount, balance_after
       FROM transactions
-      WHERE account_id = ? AND date >= ? AND date <= ?
-      GROUP BY date ORDER BY date
-    `).all(account.id, startDate, endDate) as { date: string; daily_total: number }[];
+      WHERE account_id = ? AND date >= ?
+      ORDER BY date ASC, id ASC
+    `).all(account.id, balanceDate) as { date: string; amount: number; balance_after: number | null }[];
 
-    let runningBalance = initialBalance + priorSum.total;
-    for (const day of dailyTx) {
-      runningBalance += day.daily_total;
-      result.push({ date: day.date, balance: Math.round(runningBalance * 100) / 100, account_name: account.name });
+    let runningBalance = initialBalance;
+    const dailyBalances = new Map<string, number>();
+
+    for (const tx of allTx) {
+      if (tx.balance_after !== null) {
+        // balance_after is a correction point — use it directly
+        runningBalance = tx.balance_after;
+      } else {
+        runningBalance += tx.amount;
+      }
+      dailyBalances.set(tx.date, Math.round(runningBalance * 100) / 100);
+    }
+
+    // Only include dates in the display range
+    for (const [date, balance] of dailyBalances) {
+      if (date >= displayFrom && date <= displayTo) {
+        result.push({ date, balance, account_name: account.name });
+      }
     }
   }
 

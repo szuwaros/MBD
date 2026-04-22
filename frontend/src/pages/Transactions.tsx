@@ -11,11 +11,13 @@ export default function Transactions() {
   const [total, setTotal] = useState(0);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
-  const [filters, setFilters] = useState(() => {
+  type Filters = { account_id: string; from: string; to: string; category_id: string; search: string; amount_min: string; amount_max: string };
+  const defaultFilters: Filters = { account_id: '', from: '', to: '', category_id: '', search: '', amount_min: '', amount_max: '' };
+  const [filters, setFilters] = useState<Filters>(() => {
     try {
       const raw = sessionStorage.getItem('tx:filters');
-      return raw ? JSON.parse(raw) : { account_id: '', from: '', to: '', category_id: '', search: '', amount_min: '', amount_max: '' };
-    } catch { return { account_id: '', from: '', to: '', category_id: '', search: '', amount_min: '', amount_max: '' }; }
+      return raw ? { ...defaultFilters, ...JSON.parse(raw) } : defaultFilters;
+    } catch { return defaultFilters; }
   });
   const [splitTx, setSplitTx] = useState<any>(null);
   const fetchParamsRef = useRef<any>({});
@@ -210,7 +212,7 @@ export default function Transactions() {
     },
     {
       key: 'note', label: 'Notatka', sortable: false, className: 'px-2 py-1',
-      render: tx => <NoteCell txId={tx.id} note={tx.note} onSave={load} />,
+      render: tx => <NoteCell txId={tx.id} note={tx.note} onSave={(id, newNote) => setTransactions(prev => prev.map(t => t.id === id ? { ...t, note: newNote } : t))} />,
     },
     { key: 'type', label: 'Typ', className: 'px-2 py-1 text-xs text-gray-400 max-w-[140px] truncate', render: tx => <span title={tx.type || ''}>{tx.type || '-'}</span> },
     { key: 'account_name', label: 'Konto', className: 'px-2 py-1 text-xs text-gray-500 whitespace-nowrap', render: tx => tx.account_name },
@@ -277,7 +279,7 @@ export default function Transactions() {
       <h1 className="text-2xl font-bold mb-6">Transakcje</h1>
 
       <div className="bg-white rounded-lg shadow p-3 mb-2">
-        <DateRangeSelector from={filters.from} to={filters.to} onChange={(f, t) => setFilters(prev => ({ ...prev, from: f, to: t }))} defaultPreset="month" />
+        <DateRangeSelector from={filters.from} to={filters.to} onChange={(f, t) => setFilters(prev => ({ ...prev, from: f, to: t }))} defaultPreset={filters.from ? 'custom' : 'month'} />
       </div>
       <div className="bg-white rounded-lg shadow p-3 mb-4 flex gap-3 flex-wrap items-end">
         <div>
@@ -289,7 +291,14 @@ export default function Transactions() {
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">Kategoria</label>
-          <GroupedCategorySelect categories={categories} value={filters.category_id} onChange={v => setFilters(f => ({ ...f, category_id: v }))} className="border rounded px-2 py-1.5 text-sm" placeholder="Wszystkie" />
+          {filters.category_id === 'none' ? (
+            <div className="flex items-center gap-1">
+              <span className="border rounded px-2 py-1.5 text-sm bg-gray-100 text-gray-600">Bez kategorii</span>
+              <button onClick={() => setFilters(f => ({ ...f, category_id: '' }))} className="text-red-400 hover:text-red-600 text-xs">&#x2715;</button>
+            </div>
+          ) : (
+            <GroupedCategorySelect categories={categories} value={filters.category_id} onChange={v => setFilters(f => ({ ...f, category_id: v }))} className="border rounded px-2 py-1.5 text-sm" placeholder="Wszystkie" />
+          )}
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">Kwota od</label>
