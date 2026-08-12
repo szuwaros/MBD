@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rozpoznawanie wzorca w obrazie</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: #fff;
+    }
+    .subtitle {
+      font-size: 0.875rem;
+      color: #64748b;
+      margin-bottom: 28px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 20px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .panel {
+      background: #1e2130;
+      border: 1px solid #2d3149;
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .panel h2 {
+      font-size: 0.875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #94a3b8;
+      margin-bottom: 16px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.8rem;
+      color: #94a3b8;
+      margin-bottom: 6px;
+    }
+
+    .drop-zone {
+      border: 2px dashed #2d3149;
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      margin-bottom: 14px;
+      min-height: 80px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.over {
+      border-color: #6366f1;
+      background: #1a1e35;
+    }
+    .drop-zone input[type=file] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+    .drop-zone img {
+      max-width: 100%;
+      max-height: 120px;
+      border-radius: 4px;
+      object-fit: contain;
+    }
+    .drop-zone .hint {
+      font-size: 0.75rem;
+      color: #64748b;
+    }
+    .drop-zone .icon { font-size: 1.5rem; }
+
+    .field { margin-bottom: 14px; }
+
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    input[type=range] {
+      flex: 1;
+      accent-color: #6366f1;
+    }
+    .slider-val {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #a5b4fc;
+      min-width: 36px;
+      text-align: right;
+    }
+
+    select {
+      width: 100%;
+      padding: 8px 10px;
+      background: #0f1117;
+      border: 1px solid #2d3149;
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-size: 0.85rem;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 12px;
+      background: #6366f1;
+      color: #fff;
+      font-size: 0.9rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+      margin-top: 6px;
+    }
+    .btn:hover { background: #4f46e5; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .spinner {
+      display: none;
+      width: 18px;
+      height: 18px;
+      border: 2px solid #fff4;
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin: 0 auto;
+    }
+    .btn.loading .btn-text { display: none; }
+    .btn.loading .spinner { display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .stats {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+    .stat {
+      background: #1e2130;
+      border: 1px solid #2d3149;
+      border-radius: 8px;
+      padding: 10px 16px;
+      text-align: center;
+      flex: 1;
+      min-width: 80px;
+    }
+    .stat .val {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #6366f1;
+      line-height: 1;
+    }
+    .stat .lbl {
+      font-size: 0.72rem;
+      color: #64748b;
+      margin-top: 3px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 2px;
+      margin-bottom: 14px;
+      background: #0f1117;
+      border-radius: 8px;
+      padding: 3px;
+    }
+    .tab {
+      flex: 1;
+      padding: 7px;
+      text-align: center;
+      font-size: 0.8rem;
+      border-radius: 6px;
+      cursor: pointer;
+      color: #64748b;
+      transition: background 0.15s, color 0.15s;
+    }
+    .tab.active {
+      background: #1e2130;
+      color: #e2e8f0;
+      font-weight: 600;
+    }
+
+    .img-wrap {
+      background: #0a0c14;
+      border: 1px solid #2d3149;
+      border-radius: 8px;
+      overflow: hidden;
+      min-height: 200px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .img-wrap img {
+      max-width: 100%;
+      display: block;
+    }
+
+    .matches-list {
+      max-height: 300px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .match-item {
+      background: #131625;
+      border: 1px solid #2d3149;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 0.8rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .match-item .coords { color: #94a3b8; }
+    .match-item .score {
+      font-weight: 700;
+      color: #4ade80;
+    }
+
+    .error-box {
+      background: #2d1515;
+      border: 1px solid #7f1d1d;
+      border-radius: 8px;
+      padding: 12px 16px;
+      color: #fca5a5;
+      font-size: 0.85rem;
+      margin-bottom: 14px;
+      display: none;
+    }
+
+    .placeholder {
+      color: #2d3149;
+      font-size: 0.85rem;
+      text-align: center;
+      padding: 40px 20px;
+    }
+
+    @media (max-width: 768px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Rozpoznawanie wzorca w obrazie</h1>
+  <p class="subtitle">Wyszukuje wzorzec (template matching) w obrazie docelowym metod&#0261; OpenCV</p>
+
+  <div class="grid">
+    <!-- LEFT: controls -->
+    <div class="panel">
+      <h2>Parametry</h2>
+
+      <div class="field">
+        <label>Wzorzec (template)</label>
+        <div class="drop-zone" id="dz-template">
+          <input type="file" id="inp-template" accept="image/*" />
+          <span class="icon">&#128269;</span>
+          <span class="hint">Kliknij lub przeci&#0261;gnij obraz wzorca</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Obraz docelowy</label>
+        <div class="drop-zone" id="dz-target">
+          <input type="file" id="inp-target" accept="image/*" />
+          <span class="icon">&#128444;&#65039;</span>
+          <span class="hint">Kliknij lub przeci&#0261;gnij obraz do przeszukania</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Pr&#243;g dopasowania: <span id="thresh-label">0.70</span></label>
+        <div class="slider-row">
+          <input type="range" id="threshold" min="0.1" max="1.0" step="0.01" value="0.70" />
+          <span class="slider-val" id="thresh-val">0.70</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Metoda</label>
+        <select id="method">
+          <option value="TM_CCOEFF_NORMED">TM_CCOEFF_NORMED (zalecana)</option>
+          <option value="TM_CCORR_NORMED">TM_CCORR_NORMED</option>
+          <option value="TM_SQDIFF_NORMED">TM_SQDIFF_NORMED</option>
+        </select>
+      </div>
+
+      <button class="btn" id="btn-match" disabled>
+        <span class="btn-text">Szukaj wzorca</span>
+        <div class="spinner"></div>
+      </button>
+    </div>
+
+    <!-- RIGHT: results -->
+    <div class="panel">
+      <h2>Wyniki</h2>
+
+      <div class="error-box" id="error-box"></div>
+
+      <div id="stats-row" class="stats" style="display:none">
+        <div class="stat">
+          <div class="val" id="stat-count">0</div>
+          <div class="lbl">Znalezionych</div>
+        </div>
+        <div class="stat">
+          <div class="val" id="stat-best">&ndash;</div>
+          <div class="lbl">Najlepszy wynik</div>
+        </div>
+        <div class="stat">
+          <div class="val" id="stat-size">&ndash;</div>
+          <div class="lbl">Rozmiar wzorca</div>
+        </div>
+      </div>
+
+      <div class="tabs" id="tabs" style="display:none">
+        <div class="tab active" data-tab="result">Wynik</div>
+        <div class="tab" data-tab="scoremap">Mapa podobie&#324;stwa</div>
+        <div class="tab" data-tab="list">Lista dopasowa&#324;</div>
+      </div>
+
+      <div id="tab-result" class="tab-content">
+        <div class="img-wrap" id="result-img-wrap">
+          <div class="placeholder">Wyniki pojawi&#0261; si&#0281; tutaj po wyszukaniu</div>
+        </div>
+      </div>
+      <div id="tab-scoremap" class="tab-content" style="display:none">
+        <div class="img-wrap" id="score-img-wrap">
+          <div class="placeholder">Mapa podobie&#324;stwa</div>
+        </div>
+      </div>
+      <div id="tab-list" class="tab-content" style="display:none">
+        <div class="matches-list" id="matches-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const inpTemplate = document.getElementById('inp-template');
+    const inpTarget = document.getElementById('inp-target');
+    const dzTemplate = document.getElementById('dz-template');
+    const dzTarget = document.getElementById('dz-target');
+    const threshold = document.getElementById('threshold');
+    const threshVal = document.getElementById('thresh-val');
+    const threshLabel = document.getElementById('thresh-label');
+    const methodSel = document.getElementById('method');
+    const btnMatch = document.getElementById('btn-match');
+    const errorBox = document.getElementById('error-box');
+    const statsRow = document.getElementById('stats-row');
+    const tabsEl = document.getElementById('tabs');
+
+    let hasTemplate = false, hasTarget = false;
+
+    threshold.addEventListener('input', () => {
+      const v = parseFloat(threshold.value).toFixed(2);
+      threshVal.textContent = v;
+      threshLabel.textContent = v;
+    });
+
+    function setupDrop(dz, inp, onFile) {
+      inp.addEventListener('change', () => { if (inp.files[0]) onFile(inp.files[0]); });
+      dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+      dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+      dz.addEventListener('drop', e => {
+        e.preventDefault(); dz.classList.remove('over');
+        const f = e.dataTransfer.files[0];
+        if (f && f.type.startsWith('image/')) {
+          const dt = new DataTransfer();
+          dt.items.add(f);
+          inp.files = dt.files;
+          onFile(f);
+        }
+      });
+    }
+
+    function previewFile(file, dz) {
+      const reader = new FileReader();
+      reader.onload = e => {
+        dz.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = e.target.result;
+        dz.appendChild(img);
+        const newInp = dz.querySelector('input[type=file]') || (() => {
+          const i = document.createElement('input');
+          i.type = 'file'; i.accept = 'image/*';
+          i.style.cssText = 'position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;';
+          dz.style.position = 'relative';
+          dz.appendChild(i);
+          return i;
+        })();
+        newInp.style.display = 'none';
+      };
+      reader.readAsDataURL(file);
+    }
+
+    setupDrop(dzTemplate, inpTemplate, f => { previewFile(f, dzTemplate); hasTemplate = true; updateBtn(); });
+    setupDrop(dzTarget, inpTarget, f => { previewFile(f, dzTarget); hasTarget = true; updateBtn(); });
+
+    inpTemplate.addEventListener('change', () => {
+      if (inpTemplate.files[0]) { previewFile(inpTemplate.files[0], dzTemplate); hasTemplate = true; updateBtn(); }
+    });
+    inpTarget.addEventListener('change', () => {
+      if (inpTarget.files[0]) { previewFile(inpTarget.files[0], dzTarget); hasTarget = true; updateBtn(); }
+    });
+
+    function updateBtn() {
+      btnMatch.disabled = !(hasTemplate && hasTarget);
+    }
+
+    document.querySelectorAll('.tab').forEach(t => {
+      t.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(x => x.style.display = 'none');
+        t.classList.add('active');
+        document.getElementById('tab-' + t.dataset.tab).style.display = 'block';
+      });
+    });
+
+    btnMatch.addEventListener('click', async () => {
+      const tf = inpTemplate.files[0];
+      const tg = inpTarget.files[0];
+      if (!tf || !tg) { showError('Wybierz oba pliki.'); return; }
+
+      setLoading(true);
+      hideError();
+
+      const fd = new FormData();
+      fd.append('template', tf);
+      fd.append('target', tg);
+      fd.append('threshold', threshold.value);
+      fd.append('method', methodSel.value);
+
+      try {
+        const resp = await fetch('/api/match', { method: 'POST', body: fd });
+        const data = await resp.json();
+
+        if (!resp.ok) { showError(data.error || 'B&#322;&#0261;d serwera'); return; }
+
+        renderResults(data);
+      } catch (e) {
+        showError('B&#322;&#0261;d po&#322;&#0261;czenia: ' + e.message);
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    function renderResults(data) {
+      statsRow.style.display = 'flex';
+      tabsEl.style.display = 'flex';
+
+      document.getElementById('stat-count').textContent = data.count;
+      const best = data.matches.length ? Math.max(...data.matches.map(m => m.score)).toFixed(3) : '&ndash;';
+      document.getElementById('stat-best').textContent = best;
+      document.getElementById('stat-size').textContent = `${data.template_size.w}×${data.template_size.h}`;
+
+      const resultWrap = document.getElementById('result-img-wrap');
+      resultWrap.innerHTML = '';
+      const img = document.createElement('img');
+      img.src = 'data:image/png;base64,' + data.result_image;
+      resultWrap.appendChild(img);
+
+      const scoreWrap = document.getElementById('score-img-wrap');
+      scoreWrap.innerHTML = '';
+      const sImg = document.createElement('img');
+      sImg.src = 'data:image/png;base64,' + data.score_map;
+      scoreWrap.appendChild(sImg);
+
+      const list = document.getElementById('matches-list');
+      list.innerHTML = '';
+      if (data.matches.length === 0) {
+        list.innerHTML = '<div class="placeholder">Brak dopasowa&#324; przy tym progu</div>';
+      } else {
+        data.matches.forEach((m, i) => {
+          const el = document.createElement('div');
+          el.className = 'match-item';
+          el.innerHTML = `<span>#${i + 1} &nbsp;<span class="coords">x=${m.x}, y=${m.y}</span></span><span class="score">${m.score.toFixed(4)}</span>`;
+          list.appendChild(el);
+        });
+      }
+
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(x => x.style.display = 'none');
+      document.querySelector('[data-tab="result"]').classList.add('active');
+      document.getElementById('tab-result').style.display = 'block';
+    }
+
+    function setLoading(v) {
+      btnMatch.classList.toggle('loading', v);
+      btnMatch.disabled = v;
+    }
+    function showError(msg) { errorBox.textContent = msg; errorBox.style.display = 'block'; }
+    function hideError() { errorBox.style.display = 'none'; }
+  </script>
+</body>
+</html>
